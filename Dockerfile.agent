@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.24-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/capmesh-agent ./cmd/capmesh-agent
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dumpcap ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/capmesh-agent /usr/local/bin/capmesh-agent
+EXPOSE 9091
+ENTRYPOINT ["/usr/local/bin/capmesh-agent"]

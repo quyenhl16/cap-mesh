@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+package capmesh.v1;
+
+option go_package = "github.com/quyenhl16/capmesh/api/capmesh/v1;capmeshv1";
+
+service AgentService {
+  rpc Connect(stream AgentMessage) returns (stream AgentCommand);
+}
+
+service CaptureService {
+  rpc CreateSession(CreateSessionRequest) returns (CaptureSession);
+  rpc StopSession(StopSessionRequest) returns (CaptureSession);
+  rpc GetSession(GetSessionRequest) returns (CaptureSession);
+  rpc StreamPackets(StreamPacketsRequest) returns (stream PacketBatch);
+}
+
+message AgentMessage {
+  RegisterAgent register = 1;
+  Heartbeat heartbeat = 2;
+  CaptureStatus status = 3;
+  PacketBatch batch = 4;
+}
+
+message AgentCommand {
+  StartCapture start = 1;
+  StopCapture stop = 2;
+}
+
+message RegisterAgent {
+  string node_name = 1;
+  map<string, string> interfaces = 2;
+}
+
+message Heartbeat {
+  int64 timestamp_ns = 1;
+}
+
+message CaptureStatus {
+  string session_id = 1;
+  string node_name = 2;
+  string state = 3;
+  string error = 4;
+}
+
+message StartCapture {
+  string session_id = 1;
+  string logical_interface = 2;
+  string filter = 3;
+  uint32 snaplen = 4;
+}
+
+message StopCapture { string session_id = 1; }
+
+message PacketBatch {
+  string session_id = 1;
+  string node_name = 2;
+  string interface_name = 3;
+  repeated Packet packets = 4;
+}
+
+message Packet {
+  int64 timestamp_ns = 1;
+  uint32 captured_length = 2;
+  uint32 original_length = 3;
+  uint32 link_type = 4;
+  uint64 sequence_number = 5;
+  bytes data = 6;
+}
+
+message CreateSessionRequest {
+  repeated string nodes = 1;
+  string logical_interface = 2;
+  string filter = 3;
+  uint32 snaplen = 4;
+  uint32 ttl_seconds = 5;
+  uint32 reorder_window_ms = 6;
+}
+
+message StopSessionRequest { string session_id = 1; }
+message GetSessionRequest { string session_id = 1; }
+message StreamPacketsRequest { string session_id = 1; }
+
+message CaptureSession {
+  string id = 1;
+  repeated string nodes = 2;
+  string logical_interface = 3;
+  string filter = 4;
+  uint32 snaplen = 5;
+  int64 created_at_ns = 6;
+  int64 expires_at_ns = 7;
+  string status = 8;
+  string message = 9;
+}

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capmesh-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: capmesh-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: capmesh-server
+    spec:
+      serviceAccountName: capmesh-server
+      containers:
+        - name: server
+          image: capmesh-server:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --listen=:8443
+            - --metrics-listen=:9090
+            - --tls-cert=/var/run/capmesh/tls/tls.crt
+            - --tls-key=/var/run/capmesh/tls/tls.key
+            - --subscriber-queue-size=10000
+          env:
+            - name: CAPMESH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: capmesh-auth
+                  key: token
+          ports:
+            - name: grpc
+              containerPort: 8443
+            - name: metrics
+              containerPort: 9090
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 2
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/capmesh/tls
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: capmesh-tls
