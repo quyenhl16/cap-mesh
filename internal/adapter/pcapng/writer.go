@@ -9,7 +9,7 @@ import (
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcapgo"
-	"github.com/quyenhl16/capmesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
 
 type Writer struct {

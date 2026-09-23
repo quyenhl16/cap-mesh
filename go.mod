@@ -1,4 +1,4 @@
-module github.com/quyenhl16/capmesh
+module github.com/quyenhl16/cap-mesh
 
 go 1.24.0
 

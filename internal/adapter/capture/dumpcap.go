@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/gopacket/gopacket/pcapgo"
-	"github.com/quyenhl16/capmesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
 
 type Dumpcap struct {

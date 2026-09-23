@@ -14,16 +14,16 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	capmeshv1 "github.com/quyenhl16/capmesh/api/capmesh/v1"
-	"github.com/quyenhl16/capmesh/internal/adapter/capture"
-	"github.com/quyenhl16/capmesh/internal/adapter/grpcclient"
-	"github.com/quyenhl16/capmesh/internal/adapter/kubernetes"
-	metricadapter "github.com/quyenhl16/capmesh/internal/adapter/metrics"
-	appagent "github.com/quyenhl16/capmesh/internal/application/agent"
+	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/capture"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcclient"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/kubernetes"
+	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
+	appagent "github.com/quyenhl16/cap-mesh/internal/application/agent"
 )
 
 func main() {
-	server := flag.String("server", "127.0.0.1:8443", "capmesh-server address")
+	server := flag.String("server", "127.0.0.1:18443", "capmesh-server address")
 	node := flag.String("node", defaultNodeName(), "Kubernetes node name")
 	interfaceA := flag.String("interface-a", "", "physical interface mapped to A")
 	interfaceB := flag.String("interface-b", "", "physical interface mapped to B")

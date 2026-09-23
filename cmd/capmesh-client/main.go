@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	capmeshv1 "github.com/quyenhl16/capmesh/api/capmesh/v1"
-	"github.com/quyenhl16/capmesh/internal/adapter/grpcapi"
-	"github.com/quyenhl16/capmesh/internal/adapter/grpcclient"
-	"github.com/quyenhl16/capmesh/internal/adapter/pcapng"
+	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcapi"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcclient"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/pcapng"
 )
 
 func main() {
-	server := flag.String("server", "127.0.0.1:8443", "capmesh-server address")
+	server := flag.String("server", "127.0.0.1:18443", "capmesh-server address")
 	sessionID := flag.String("session", "", "existing capture session ID")
 	create := flag.Bool("create", false, "create a session before subscribing")
 	nodes := flag.String("nodes", "", "comma-separated node names for a new session")

@@ -3,6 +3,6 @@ kind: ConfigMap
 metadata:
   name: capmesh-config
 data:
-  CAPMESH_SERVER: capmesh-server:8443
+  CAPMESH_SERVER: capmesh-server:18443
   CAPMESH_TLS_SERVER_NAME: capmesh-server
   CAPMESH_SUBSCRIBER_QUEUE_SIZE: "10000"

@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/quyenhl16/capmesh/internal/core/domain"
-	"github.com/quyenhl16/capmesh/internal/core/ports"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 )
 
 type Agent struct {

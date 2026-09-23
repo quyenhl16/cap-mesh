@@ -4,9 +4,9 @@ import (
 	"io"
 	"log/slog"
 
-	capmeshv1 "github.com/quyenhl16/capmesh/api/capmesh/v1"
-	"github.com/quyenhl16/capmesh/internal/adapter/grpcapi"
-	"github.com/quyenhl16/capmesh/internal/core/ports"
+	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcapi"
+	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

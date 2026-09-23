@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quyenhl16/capmesh/internal/adapter/memory"
-	"github.com/quyenhl16/capmesh/internal/core/domain"
-	"github.com/quyenhl16/capmesh/internal/core/ports"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/memory"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 )
 
 type fakeAgents struct {

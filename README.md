@@ -63,7 +63,7 @@ Terminal 2 — agent (đổi `eth0` thành interface thật):
 
 ```bash
 go run ./cmd/capmesh-agent \
-  --server 127.0.0.1:8443 \
+  --server 127.0.0.1:18443 \
   --node worker-local \
   --interface-a eth0 \
   --token dev-secret \
@@ -74,7 +74,7 @@ Terminal 3 — tạo session và xem ngay bằng Wireshark:
 
 ```bash
 go run ./cmd/capmesh-client \
-  --server 127.0.0.1:8443 \
+  --server 127.0.0.1:18443 \
   --create \
   --nodes worker-local \
   --interface A \
@@ -89,7 +89,7 @@ go run ./cmd/capmesh-client \
 Có thể ghi file thay vì mở Wireshark:
 
 ```bash
-capmesh-client --server 127.0.0.1:8443 --session SESSION_ID --token dev-secret --insecure > capture.pcapng
+capmesh-client --server 127.0.0.1:18443 --session SESSION_ID --token dev-secret --insecure > capture.pcapng
 tshark -r capture.pcapng
 ```
 
@@ -101,8 +101,8 @@ Server nhận `--tls-cert` và `--tls-key`. Agent/client dùng trust store hệ 
 
 ```bash
 capmesh-server --tls-cert server.crt --tls-key server.key --token "$CAPMESH_TOKEN"
-capmesh-agent --server capture.example.com:8443 --tls-ca ca.crt --interface-a eth0
-capmesh-client --server capture.example.com:8443 --session SESSION_ID --tls-ca ca.crt | wireshark -k -i -
+capmesh-agent --server capture.example.com:18443 --tls-ca ca.crt --interface-a eth0
+capmesh-client --server capture.example.com:18443 --session SESSION_ID --tls-ca ca.crt | wireshark -k -i -
 ```
 
 Không truyền token trên command line nếu có thể; dùng biến môi trường `CAPMESH_TOKEN` để tránh lộ qua process list.
@@ -158,7 +158,7 @@ Nếu queue của một subscriber đầy, server drop packet chỉ trên subscr
 
 ## Metrics
 
-- Server: `:9090/metrics`.
+- Server: `:19090/metrics`.
 - Agent: `:9091/metrics`.
 
 Các metric chính gồm packet received/emitted/late, reorder buffer size, subscriber drops/queue usage, agent captured/sent bytes và stream errors.

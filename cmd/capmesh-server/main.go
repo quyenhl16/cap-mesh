@@ -15,19 +15,19 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	capmeshv1 "github.com/quyenhl16/capmesh/api/capmesh/v1"
-	"github.com/quyenhl16/capmesh/internal/adapter/grpcserver"
-	"github.com/quyenhl16/capmesh/internal/adapter/memory"
-	metricadapter "github.com/quyenhl16/capmesh/internal/adapter/metrics"
-	appsession "github.com/quyenhl16/capmesh/internal/application/session"
-	appstream "github.com/quyenhl16/capmesh/internal/application/stream"
+	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcserver"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/memory"
+	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
+	appsession "github.com/quyenhl16/cap-mesh/internal/application/session"
+	appstream "github.com/quyenhl16/cap-mesh/internal/application/stream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
 func main() {
-	listenAddress := flag.String("listen", ":8443", "gRPC listen address")
-	metricsAddress := flag.String("metrics-listen", ":9090", "Prometheus metrics listen address")
+	listenAddress := flag.String("listen", ":18443", "gRPC listen address")
+	metricsAddress := flag.String("metrics-listen", ":19090", "Prometheus metrics listen address")
 	token := flag.String("token", os.Getenv("CAPMESH_TOKEN"), "shared bearer token")
 	adminToken := flag.String("admin-token", os.Getenv("CAPMESH_ADMIN_TOKEN"), "bearer token allowed to create, view, and stop sessions")
 	viewerToken := flag.String("viewer-token", os.Getenv("CAPMESH_VIEWER_TOKEN"), "bearer token allowed to view sessions and packets")

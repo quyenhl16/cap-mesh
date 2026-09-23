@@ -979,7 +979,7 @@ const file_api_capmesh_v1_capture_proto_rawDesc = "" +
 	"\vStopSession\x12\x1e.capmesh.v1.StopSessionRequest\x1a\x1a.capmesh.v1.CaptureSession\x12G\n" +
 	"\n" +
 	"GetSession\x12\x1d.capmesh.v1.GetSessionRequest\x1a\x1a.capmesh.v1.CaptureSession\x12L\n" +
-	"\rStreamPackets\x12 .capmesh.v1.StreamPacketsRequest\x1a\x17.capmesh.v1.PacketBatch0\x01B7Z5github.com/quyenhl16/capmesh/api/capmesh/v1;capmeshv1b\x06proto3"
+	"\rStreamPackets\x12 .capmesh.v1.StreamPacketsRequest\x1a\x17.capmesh.v1.PacketBatch0\x01B8Z6github.com/quyenhl16/cap-mesh/api/capmesh/v1;capmeshv1b\x06proto3"
 
 var (
 	file_api_capmesh_v1_capture_proto_rawDescOnce sync.Once

@@ -3,7 +3,7 @@ package stream
 import (
 	"container/heap"
 
-	"github.com/quyenhl16/capmesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
 
 type packetItem struct {

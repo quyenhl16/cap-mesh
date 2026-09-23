@@ -3,8 +3,8 @@ package grpcapi
 import (
 	"time"
 
-	capmeshv1 "github.com/quyenhl16/capmesh/api/capmesh/v1"
-	"github.com/quyenhl16/capmesh/internal/core/domain"
+	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
 
 func PacketBatchToProto(batch domain.PacketBatch) *capmeshv1.PacketBatch {

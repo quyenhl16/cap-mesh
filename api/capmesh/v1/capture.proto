@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package capmesh.v1;
 
-option go_package = "github.com/quyenhl16/capmesh/api/capmesh/v1;capmeshv1";
+option go_package = "github.com/quyenhl16/cap-mesh/api/capmesh/v1;capmeshv1";
 
 service AgentService {
   rpc Connect(stream AgentMessage) returns (stream AgentCommand);

@@ -7,8 +7,8 @@ spec:
     app.kubernetes.io/name: capmesh-server
   ports:
     - name: grpc
-      port: 8443
+      port: 18443
       targetPort: grpc
     - name: metrics
-      port: 9090
+      port: 19090
       targetPort: metrics

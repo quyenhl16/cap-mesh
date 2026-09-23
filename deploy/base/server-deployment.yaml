@@ -18,8 +18,8 @@ spec:
           image: capmesh-server:latest
           imagePullPolicy: IfNotPresent
           args:
-            - --listen=:8443
-            - --metrics-listen=:9090
+            - --listen=:18443
+            - --metrics-listen=:19090
             - --tls-cert=/var/run/capmesh/tls/tls.crt
             - --tls-key=/var/run/capmesh/tls/tls.key
             - --subscriber-queue-size=10000
@@ -31,9 +31,9 @@ spec:
                   key: token
           ports:
             - name: grpc
-              containerPort: 8443
+              containerPort: 18443
             - name: metrics
-              containerPort: 9090
+              containerPort: 19090
           readinessProbe:
             tcpSocket:
               port: grpc
