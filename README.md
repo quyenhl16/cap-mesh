@@ -51,6 +51,15 @@ Sinh lại protobuf:
 make generate
 ```
 
+Đồng bộ dependency vào `vendor` sau mỗi lần thay đổi `go.mod` hoặc `go.sum`:
+
+```bash
+go mod tidy
+make vendor
+```
+
+Docker build sử dụng `go build -mod=vendor` và không chạy `go mod download` bên trong build container. Vì vậy thư mục `vendor/` phải được commit và có mặt trong Docker build context.
+
 ## Chạy local
 
 Terminal 1 — server không TLS cho local:

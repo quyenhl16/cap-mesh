@@ -1,0 +1,7 @@
+.git
+.cache
+.tools
+bin
+*.pcap
+*.pcapng
+coverage.out
