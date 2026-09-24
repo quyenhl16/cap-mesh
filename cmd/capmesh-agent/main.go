@@ -18,6 +18,7 @@ import (
 	"github.com/quyenhl16/cap-mesh/internal/adapter/capture"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcclient"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/kubernetes"
+	logadapter "github.com/quyenhl16/cap-mesh/internal/adapter/logging"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
 	appagent "github.com/quyenhl16/cap-mesh/internal/application/agent"
 )
@@ -34,6 +35,7 @@ func main() {
 	caFile := flag.String("tls-ca", "", "server CA certificate")
 	serverName := flag.String("tls-server-name", "", "TLS server name override")
 	metricsAddress := flag.String("metrics-listen", ":9091", "Prometheus metrics listen address")
+	captureLogInterval := flag.Duration("capture-log-interval", 10*time.Second, "interval for per-interface packet count logs; 0 disables periodic logs")
 	interfacesFromKubernetes := flag.Bool("interfaces-from-kubernetes", false, "read interface mappings from Node annotations")
 	flag.Parse()
 
@@ -57,12 +59,17 @@ func main() {
 		logger.Error("at least one interface mapping is required")
 		os.Exit(2)
 	}
+	if *captureLogInterval < 0 {
+		logger.Error("--capture-log-interval must not be negative")
+		os.Exit(2)
+	}
 
 	reporter := grpcclient.NewReporter(256)
 	registry := prometheus.NewRegistry()
 	agentMetrics := metricadapter.NewAgent(registry, reporter)
 	engine := metricadapter.NewCaptureEngine(capture.Dumpcap{Binary: *dumpcap, Logger: logger}, agentMetrics)
-	service := appagent.NewService(*node, interfaces, engine, agentMetrics, 64, 10*time.Millisecond)
+	progressLogger := logadapter.NewCaptureProgress(logger)
+	service := appagent.NewService(*node, interfaces, engine, agentMetrics, progressLogger, 64, 10*time.Millisecond, *captureLogInterval)
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

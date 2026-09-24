@@ -25,6 +25,7 @@ spec:
             - --tls-ca=/var/run/capmesh/tls/ca.crt
             - --tls-server-name=$(CAPMESH_TLS_SERVER_NAME)
             - --metrics-listen=:9091
+            - --capture-log-interval=10s
           envFrom:
             - configMapRef:
                 name: capmesh-config

@@ -58,3 +58,21 @@ type AgentReporter interface {
 	SendBatch(context.Context, domain.PacketBatch) error
 	SendStatus(context.Context, string, string, string) error
 }
+
+type CaptureProgress struct {
+	SessionID       string
+	NodeName        string
+	InterfaceName   string
+	PacketsTotal    uint64
+	BytesTotal      uint64
+	PacketsInterval uint64
+	BytesInterval   uint64
+	StartedAt       time.Time
+	ObservedAt      time.Time
+	Interval        time.Duration
+	Final           bool
+}
+
+type CaptureProgressReporter interface {
+	ReportCaptureProgress(CaptureProgress)
+}

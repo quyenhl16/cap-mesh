@@ -159,6 +159,7 @@ DaemonSet dùng `hostNetwork` và chỉ thêm `NET_RAW`, `NET_ADMIN`; các Linux
 | --- | --- | --- |
 | Server | `--subscriber-queue-size` | `10000` |
 | Agent | batch packet / delay | `64` / `10ms` (MVP cố định) |
+| Agent | `--capture-log-interval` | `10s`; đặt `0` để tắt log định kỳ |
 | Client | `--reorder-window` | `300ms` |
 | Client | flush packet / delay | `64` / `50ms` (MVP cố định) |
 | Client | `--ttl` | `5m` |

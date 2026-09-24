@@ -19,18 +19,20 @@ type StartRequest struct {
 }
 
 type Service struct {
-	mu              sync.Mutex
-	nodeName        string
-	interfaces      map[string]string
-	engine          ports.CaptureEngine
-	reporter        ports.AgentReporter
-	batchMaxPackets int
-	batchMaxDelay   time.Duration
-	captures        map[string]context.CancelFunc
+	mu               sync.Mutex
+	nodeName         string
+	interfaces       map[string]string
+	engine           ports.CaptureEngine
+	reporter         ports.AgentReporter
+	progress         ports.CaptureProgressReporter
+	batchMaxPackets  int
+	batchMaxDelay    time.Duration
+	progressInterval time.Duration
+	captures         map[string]context.CancelFunc
 }
 
-func NewService(nodeName string, interfaces map[string]string, engine ports.CaptureEngine, reporter ports.AgentReporter, maxPackets int, maxDelay time.Duration) *Service {
-	return &Service{nodeName: nodeName, interfaces: interfaces, engine: engine, reporter: reporter, batchMaxPackets: maxPackets, batchMaxDelay: maxDelay, captures: make(map[string]context.CancelFunc)}
+func NewService(nodeName string, interfaces map[string]string, engine ports.CaptureEngine, reporter ports.AgentReporter, progress ports.CaptureProgressReporter, maxPackets int, maxDelay, progressInterval time.Duration) *Service {
+	return &Service{nodeName: nodeName, interfaces: interfaces, engine: engine, reporter: reporter, progress: progress, batchMaxPackets: maxPackets, batchMaxDelay: maxDelay, progressInterval: progressInterval, captures: make(map[string]context.CancelFunc)}
 }
 
 func (s *Service) Start(parent context.Context, request StartRequest) error {
@@ -81,6 +83,39 @@ func (s *Service) StopAll() {
 
 func (s *Service) batch(ctx context.Context, sessionID, iface string, packets <-chan domain.Packet, captureErrors <-chan error) {
 	defer s.remove(sessionID)
+	startedAt := time.Now()
+	lastReportAt := startedAt
+	var packetsTotal, bytesTotal, packetsInterval, bytesInterval uint64
+	reportProgress := func(final bool) {
+		if s.progress == nil {
+			return
+		}
+		now := time.Now()
+		s.progress.ReportCaptureProgress(ports.CaptureProgress{
+			SessionID:       sessionID,
+			NodeName:        s.nodeName,
+			InterfaceName:   iface,
+			PacketsTotal:    packetsTotal,
+			BytesTotal:      bytesTotal,
+			PacketsInterval: packetsInterval,
+			BytesInterval:   bytesInterval,
+			StartedAt:       startedAt,
+			ObservedAt:      now,
+			Interval:        now.Sub(lastReportAt),
+			Final:           final,
+		})
+		packetsInterval = 0
+		bytesInterval = 0
+		lastReportAt = now
+	}
+	defer reportProgress(true)
+	var progressTicker *time.Ticker
+	var progressC <-chan time.Time
+	if s.progress != nil && s.progressInterval > 0 {
+		progressTicker = time.NewTicker(s.progressInterval)
+		progressC = progressTicker.C
+		defer progressTicker.Stop()
+	}
 	timer := time.NewTimer(s.batchMaxDelay)
 	if !timer.Stop() {
 		<-timer.C
@@ -112,6 +147,10 @@ func (s *Service) batch(ctx context.Context, sessionID, iface string, packets <-
 			if len(batch) == 0 {
 				timer.Reset(s.batchMaxDelay)
 			}
+			packetsTotal++
+			bytesTotal += uint64(packet.CapturedLength)
+			packetsInterval++
+			bytesInterval += uint64(packet.CapturedLength)
 			batch = append(batch, packet)
 			if len(batch) >= s.batchMaxPackets {
 				if !timer.Stop() {
@@ -130,6 +169,8 @@ func (s *Service) batch(ctx context.Context, sessionID, iface string, packets <-
 				_ = s.reporter.SendStatus(context.Background(), sessionID, "FAILED", err.Error())
 				return
 			}
+		case <-progressC:
+			reportProgress(false)
 		case err, ok := <-errorsChannel:
 			if !ok {
 				errorsChannel = nil
