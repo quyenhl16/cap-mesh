@@ -1,14 +1,20 @@
 package capture
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
 	"github.com/gopacket/gopacket/pcapgo"
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
@@ -23,7 +29,10 @@ func (d Dumpcap) Capture(ctx context.Context, iface, filter string, snaplen uint
 	if filter != "" {
 		args = append(args, "-f", filter)
 	}
-	args = append(args, "-s", strconv.FormatUint(uint64(snaplen), 10), "-F", "pcap", "-w", "-")
+	// Do not force the output format here. Older dumpcap releases use -P for
+	// pcap while newer releases prefer -F pcap. Reading either native format
+	// keeps the agent compatible with both generations.
+	args = append(args, "-s", strconv.FormatUint(uint64(snaplen), 10), "-w", "-")
 	cmd := exec.CommandContext(ctx, d.Binary, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -38,16 +47,21 @@ func (d Dumpcap) Capture(ctx context.Context, iface, filter string, snaplen uint
 	}
 	packets := make(chan domain.Packet, 256)
 	errors := make(chan error, 1)
+	dumpcapLog := &logWriter{logger: d.Logger}
+	stderrDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(&logWriter{logger: d.Logger}, stderr)
+		defer close(stderrDone)
+		_, _ = io.Copy(dumpcapLog, stderr)
 	}()
 	go func() {
 		defer close(packets)
 		defer close(errors)
-		reader, err := pcapgo.NewReader(stdout)
+		reader, err := newPacketReader(stdout)
 		if err != nil {
-			errors <- fmt.Errorf("read pcap header: %w", err)
+			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
+			<-stderrDone
+			errors <- withDumpcapOutput(fmt.Errorf("read capture header: %w", err), dumpcapLog.String())
 			return
 		}
 		var sequence atomic.Uint64
@@ -65,12 +79,15 @@ func (d Dumpcap) Capture(ctx context.Context, iface, filter string, snaplen uint
 			case packets <- packet:
 			case <-ctx.Done():
 				_ = cmd.Wait()
+				<-stderrDone
 				return
 			}
 		}
-		if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		waitErr := cmd.Wait()
+		<-stderrDone
+		if waitErr != nil && ctx.Err() == nil {
 			select {
-			case errors <- fmt.Errorf("dumpcap exited: %w", err):
+			case errors <- withDumpcapOutput(fmt.Errorf("dumpcap exited: %w", waitErr), dumpcapLog.String()):
 			default:
 			}
 		}
@@ -78,11 +95,58 @@ func (d Dumpcap) Capture(ctx context.Context, iface, filter string, snaplen uint
 	return packets, errors, nil
 }
 
-type logWriter struct{ logger *slog.Logger }
+type packetReader interface {
+	ReadPacketData() ([]byte, gopacket.CaptureInfo, error)
+	LinkType() layers.LinkType
+}
+
+var pcapngMagic = []byte{0x0a, 0x0d, 0x0d, 0x0a}
+
+func newPacketReader(input io.Reader) (packetReader, error) {
+	buffered := bufio.NewReader(input)
+	magic, err := buffered.Peek(len(pcapngMagic))
+	if err != nil {
+		return nil, err
+	}
+	if bytes.Equal(magic, pcapngMagic) {
+		return pcapgo.NewNgReader(buffered, pcapgo.DefaultNgReaderOptions)
+	}
+	return pcapgo.NewReader(buffered)
+}
+
+func withDumpcapOutput(err error, output string) error {
+	if output = strings.TrimSpace(output); output != "" {
+		return fmt.Errorf("%w: dumpcap output: %s", err, output)
+	}
+	return err
+}
+
+const maxDumpcapLogBytes = 16 * 1024
+
+type logWriter struct {
+	logger *slog.Logger
+	mu     sync.Mutex
+	output strings.Builder
+}
 
 func (w *logWriter) Write(value []byte) (int, error) {
+	written := len(value)
 	if w.logger != nil {
 		w.logger.Debug("dumpcap", "output", string(value))
 	}
-	return len(value), nil
+	w.mu.Lock()
+	if remaining := maxDumpcapLogBytes - w.output.Len(); remaining > 0 {
+		if len(value) > remaining {
+			value = value[:remaining]
+		}
+		_, _ = w.output.Write(value)
+	}
+	w.mu.Unlock()
+	return written, nil
+}
+
+func (w *logWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.output.String()
 }
