@@ -77,6 +77,15 @@ func TestBatchFlushesAtMaximumPacketCount(t *testing.T) {
 	service.StopAll()
 }
 
+func TestStartNormalizesCustomInterfaceAlias(t *testing.T) {
+	engine := &fakeEngine{packets: make(chan domain.Packet), errors: make(chan error)}
+	service := NewService("worker-1", map[string]string{"data-east": "ens192"}, engine, &fakeReporter{}, nil, 64, time.Hour, 0)
+	if err := service.Start(context.Background(), StartRequest{SessionID: "s1", LogicalInterface: "DATA-East", Snaplen: 256}); err != nil {
+		t.Fatal(err)
+	}
+	service.StopAll()
+}
+
 func TestBatchFlushesAfterDelay(t *testing.T) {
 	engine := &fakeEngine{packets: make(chan domain.Packet, 1), errors: make(chan error)}
 	reporter := &fakeReporter{}

@@ -14,6 +14,7 @@ import (
 
 type Writer struct {
 	output        *bufio.Writer
+	byteCounter   *byteCounter
 	writer        *pcapgo.NgWriter
 	interfaces    map[string]int
 	linkTypes     map[string]uint32
@@ -23,8 +24,26 @@ type Writer struct {
 	lastFlush     time.Time
 }
 
+type byteCounter struct {
+	output  io.Writer
+	written int64
+}
+
+func (w *byteCounter) Write(data []byte) (int, error) {
+	n, err := w.output.Write(data)
+	w.written += int64(n)
+	return n, err
+}
+
 func NewWriter(output io.Writer, flushPackets int, flushInterval time.Duration) *Writer {
-	return &Writer{output: bufio.NewWriterSize(output, 256*1024), interfaces: make(map[string]int), linkTypes: make(map[string]uint32), flushPackets: flushPackets, flushInterval: flushInterval, lastFlush: time.Now()}
+	counter := &byteCounter{output: output}
+	return &Writer{output: bufio.NewWriterSize(counter, 256*1024), byteCounter: counter, interfaces: make(map[string]int), linkTypes: make(map[string]uint32), flushPackets: flushPackets, flushInterval: flushInterval, lastFlush: time.Now()}
+}
+
+// BytesWritten returns the encoded PCAPNG size, including bytes that are still
+// buffered and have not reached the underlying writer yet.
+func (w *Writer) BytesWritten() int64 {
+	return w.byteCounter.written + int64(w.output.Buffered())
 }
 
 func (w *Writer) WriteBatch(batch domain.PacketBatch) error {

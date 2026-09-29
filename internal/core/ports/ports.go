@@ -38,7 +38,17 @@ type PacketPublisher interface {
 	OpenSession(string, time.Duration, int) error
 	Publish(domain.PacketBatch)
 	Subscribe(context.Context, string) (<-chan domain.PacketBatch, error)
+	SubscribeLossAware(context.Context, string, int) (PacketSubscription, error)
 	CloseSession(string)
+}
+
+type PacketSubscription struct {
+	Batches <-chan domain.PacketBatch
+	Dropped <-chan struct{}
+}
+
+type CaptureRecorder interface {
+	Start(domain.Session) error
 }
 
 type Metrics interface {

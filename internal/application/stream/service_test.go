@@ -77,3 +77,34 @@ func TestSlowSubscriberDoesNotBlockFastSubscriber(t *testing.T) {
 		t.Fatal("expected slow subscriber drops")
 	}
 }
+
+func TestLossAwareSubscriberIsDisconnectedOnOverflow(t *testing.T) {
+	service := NewService(&testMetrics{})
+	if err := service.OpenSession("s1", 0, 10); err != nil {
+		t.Fatal(err)
+	}
+	defer service.CloseSession("s1")
+	recorder, err := service.SubscribeLossAware(context.Background(), "s1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := service.Subscribe(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(-time.Second)
+	service.Publish(domain.PacketBatch{SessionID: "s1", Packets: []domain.Packet{{Timestamp: now, SequenceNumber: 1}, {Timestamp: now.Add(time.Nanosecond), SequenceNumber: 2}}})
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-live:
+		case <-time.After(time.Second):
+			t.Fatal("live subscriber did not receive all packets")
+		}
+	}
+	select {
+	case <-recorder.Dropped:
+	case <-time.After(time.Second):
+		t.Fatal("loss-aware subscriber was not notified of overflow")
+	}
+}

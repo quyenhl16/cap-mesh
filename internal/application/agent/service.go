@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/interfacealias"
 	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 )
 
@@ -36,9 +37,13 @@ func NewService(nodeName string, interfaces map[string]string, engine ports.Capt
 }
 
 func (s *Service) Start(parent context.Context, request StartRequest) error {
-	iface, ok := s.interfaces[request.LogicalInterface]
+	logicalInterface, err := interfacealias.Normalize(request.LogicalInterface)
+	if err != nil {
+		return err
+	}
+	iface, ok := s.interfaces[logicalInterface]
 	if !ok || iface == "" {
-		return fmt.Errorf("logical interface %q is not configured", request.LogicalInterface)
+		return fmt.Errorf("logical interface %q is not configured", logicalInterface)
 	}
 	s.mu.Lock()
 	if _, exists := s.captures[request.SessionID]; exists {

@@ -10,7 +10,7 @@ dumpcap -> capmesh-agent ==gRPC==> capmesh-server ==gRPC==> capmesh-client -> Wi
 
 Repository này cung cấp ba chương trình:
 
-- `capmesh-agent`: ánh xạ interface logic A/B/C, quản lý `dumpcap`, batch tối đa 64 packet hoặc 10 ms và tự kết nối lại server.
+- `capmesh-agent`: ánh xạ tối đa 10 interface bằng alias tùy chỉnh, quản lý `dumpcap`, batch tối đa 64 packet hoặc 10 ms và tự kết nối lại server.
 - `capmesh-server`: quản lý session in-memory, kiểm tra sequence gap, reorder bằng min-heap, TTL tự dừng, fan-out queue độc lập cho từng subscriber và Prometheus metrics.
 - `capmesh-client`: tạo hoặc subscribe session, ánh xạ `node/interface` sang PCAPNG Interface ID và chỉ ghi binary PCAPNG ra `stdout`.
 
@@ -65,8 +65,19 @@ Docker build sử dụng `go build -mod=vendor` và không chạy `go mod downlo
 Terminal 1 — server không TLS cho local:
 
 ```bash
-go run ./cmd/capmesh-server --token dev-secret
+go run ./cmd/capmesh-server \
+  --token dev-secret \
+  --record-dir ./data/captures \
+  --record-segment-size 100MiB \
+  --record-max-session-size 10GiB
 ```
+
+Khi `--record-dir` được cấu hình, server vừa stream packet cho các client vừa ghi
+PCAPNG. Mỗi session nằm trong thư mục `<record-dir>/<YYYY-MM-DD>/<session-id>/`.
+File đang ghi có đuôi `.part`; khi đạt giới hạn segment hoặc session kết thúc, file
+được flush và đổi tên thành `capture-000001.pcapng`, `capture-000002.pcapng`, ...
+`metadata.json` chứa trạng thái, tổng packet/byte và danh sách segment. Để trống
+`--record-dir` sẽ tắt chức năng ghi file.
 
 Terminal 2 — agent (đổi `eth0` thành interface thật):
 
@@ -74,7 +85,7 @@ Terminal 2 — agent (đổi `eth0` thành interface thật):
 go run ./cmd/capmesh-agent \
   --server 127.0.0.1:18443 \
   --node worker-local \
-  --interface-a eth0 \
+  --interface management=eth0 \
   --token dev-secret \
   --insecure
 ```
@@ -86,7 +97,7 @@ go run ./cmd/capmesh-client \
   --server 127.0.0.1:18443 \
   --create \
   --nodes worker-local \
-  --interface A \
+  --interface management \
   --filter "tcp port 443" \
   --snaplen 256 \
   --ttl 5m \
@@ -110,7 +121,7 @@ Server nhận `--tls-cert` và `--tls-key`. Agent/client dùng trust store hệ 
 
 ```bash
 capmesh-server --tls-cert server.crt --tls-key server.key --token "$CAPMESH_TOKEN"
-capmesh-agent --server capture.example.com:18443 --tls-ca ca.crt --interface-a eth0
+capmesh-agent --server capture.example.com:18443 --tls-ca ca.crt --interface management=eth0
 capmesh-client --server capture.example.com:18443 --session SESSION_ID --tls-ca ca.crt | wireshark -k -i -
 ```
 
@@ -140,10 +151,15 @@ Gắn ánh xạ interface riêng cho từng worker:
 
 ```bash
 kubectl annotate node worker-01 \
-  capture.capmesh.io/interface-a=ens192 \
-  capture.capmesh.io/interface-b=ens224 \
-  capture.capmesh.io/interface-c=bond0
+  capture.capmesh.io/interface.management=ens192 \
+  capture.capmesh.io/interface.data=ens224 \
+  capture.capmesh.io/interface.storage=bond0
 ```
+
+Mỗi node hỗ trợ tối đa 10 ánh xạ. Alias không phân biệt hoa thường, dài 1-53 ký tự,
+chỉ gồm chữ cái, chữ số hoặc dấu gạch ngang, và phải bắt đầu/kết thúc bằng chữ hoặc số.
+CLI có thể lặp lại `--interface alias=physical`; cấu hình CLI được ưu tiên hơn annotation
+cùng alias. Các cờ `--interface-a/b/c` và annotation `interface-a/b/c` cũ vẫn được hỗ trợ.
 
 Agent đọc annotation qua Kubernetes API bằng quyền tối thiểu `get nodes`. Triển khai:
 
@@ -153,25 +169,88 @@ kubectl apply -k deploy/overlays/production
 
 DaemonSet dùng `hostNetwork` và chỉ thêm `NET_RAW`, `NET_ADMIN`; các Linux capability còn lại bị drop.
 
+Các tham số khởi động của server và agent nằm trong `deploy/base/configmap.yaml` và
+được inject qua `envFrom`. Nếu một key không tồn tại, binary dùng default tích hợp;
+flag truyền trực tiếp vẫn ưu tiên hơn giá trị từ ConfigMap. Token tiếp tục lấy từ
+Secret, còn `NODE_NAME` lấy từ Downward API. Sau khi sửa ConfigMap, restart workload
+để Pod nhận environment mới:
+
+```bash
+kubectl -n capmesh rollout restart deployment/capmesh-server
+kubectl -n capmesh rollout restart daemonset/capmesh-agent
+```
+
+Base manifest dùng static Local PersistentVolume `capmesh-captures-local`, lấy thư
+mục `/var/lib/capmesh/captures` trên một node và mount vào container tại
+`/app/captures`. Trước khi deploy, xem Kubernetes hostname của các node:
+
+```bash
+kubectl get nodes -L kubernetes.io/hostname
+```
+
+Thay `REPLACE_WITH_STORAGE_NODE_HOSTNAME` trong `deploy/base/server-pv.yaml` bằng
+hostname của node lưu dữ liệu. Sau đó chạy trực tiếp trên node đó:
+
+```bash
+sudo mkdir -p /var/lib/capmesh/captures
+sudo chown 65532:65532 /var/lib/capmesh/captures
+sudo chmod 0750 /var/lib/capmesh/captures
+```
+
+PV dùng `nodeAffinity` với key chuẩn `kubernetes.io/hostname`; Kubernetes scheduler
+sẽ tự đặt server Pod lên node chứa volume, không cần gán custom label hoặc khai báo
+`nodeSelector` trong Deployment. PV/PVC dùng class `capmesh-local`, dung lượng khai
+báo `100Gi` và reclaim policy `Retain`.
+
+Recording được bật trong ConfigMap:
+
+```yaml
+# ConfigMap data
+data:
+  CAPMESH_RECORD_DIR: /app/captures
+  CAPMESH_RECORD_SEGMENT_SIZE: 100MiB
+  CAPMESH_RECORD_MAX_SESSION_SIZE: 10GiB
+  CAPMESH_RECORD_QUEUE_SIZE: "65536"
+
+# Server container/pod
+volumeMounts:
+  - name: captures
+    mountPath: /app/captures
+volumes:
+  - name: captures
+    persistentVolumeClaim:
+      claimName: capmesh-captures
+```
+
+Server phải có quyền ghi vào volume. Không nên dùng `emptyDir` cho capture cần giữ
+lại sau khi Pod restart. Pod dùng `fsGroup: 65532` để process non-root trong image
+server có quyền ghi. Local PV không tự áp quota vào filesystem; giá trị `100Gi` dùng
+cho scheduling/binding, còn dung lượng thực phụ thuộc ổ đĩa của node.
+
 ## Cấu hình chính
 
 | Thành phần | Flag | Mặc định |
 | --- | --- | --- |
 | Server | `--subscriber-queue-size` | `10000` |
+| Server | `--record-dir` | Rỗng, recording bị tắt |
+| Server | `--record-segment-size` | `100MiB`; `0` để không chia segment |
+| Server | `--record-max-session-size` | `10GiB`; `0` để không giới hạn tổng mỗi session |
+| Server | `--record-queue-size` | `65536` packet mỗi session |
+| Agent | `--interface alias=physical` | Bắt buộc ít nhất một ánh xạ, lặp lại tối đa 10 lần |
 | Agent | batch packet / delay | `64` / `10ms` (MVP cố định) |
 | Agent | `--capture-log-interval` | `10s`; đặt `0` để tắt log định kỳ |
 | Client | `--reorder-window` | `300ms` |
 | Client | flush packet / delay | `64` / `50ms` (MVP cố định) |
 | Client | `--ttl` | `5m` |
 
-Nếu queue của một subscriber đầy, server drop packet chỉ trên subscriber đó; capture và các subscriber khác không bị backpressure. Counter `capmesh_server_subscriber_drops_total` ghi nhận tình trạng này.
+Nếu queue của một subscriber đầy, server drop packet chỉ trên subscriber đó; capture và các subscriber khác không bị backpressure. Nếu queue recorder đầy, file được finalize dưới dạng `*.partial.pcapng`, metadata chuyển thành `PARTIAL`, còn live stream tiếp tục. Counter `capmesh_server_subscriber_drops_total` ghi nhận tình trạng này.
 
 ## Metrics
 
 - Server: `:19090/metrics`.
 - Agent: `:9091/metrics`.
 
-Các metric chính gồm packet received/emitted/late, reorder buffer size, subscriber drops/queue usage, agent captured/sent bytes và stream errors.
+Các metric chính gồm packet received/emitted/late, reorder buffer size, subscriber drops/queue usage, agent captured/sent bytes và stream errors. Khi recording được bật, server xuất thêm `capmesh_recording_active`, số packet/byte, số segment, queue overflow và kết quả `COMPLETED/PARTIAL/TRUNCATED/FAILED`.
 
 ## Giới hạn MVP
 

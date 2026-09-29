@@ -23,7 +23,7 @@ func TestCaptureFlowOverGRPC(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	packets := appstream.NewService(metricadapter.Noop{})
 	agents := NewAgentRegistry()
-	sessions := appsession.NewService(memory.NewSessionRepository(), agents, packets, 10)
+	sessions := appsession.NewService(memory.NewSessionRepository(), agents, packets, nil, 10)
 	server := grpc.NewServer()
 	capmeshv1.RegisterAgentServiceServer(server, NewAgentServer(agents, packets, logger))
 	capmeshv1.RegisterCaptureServiceServer(server, NewCaptureServer(sessions, packets, logger))

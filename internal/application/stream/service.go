@@ -21,13 +21,19 @@ type pipeline struct {
 	window      time.Duration
 	queueSize   int
 	packets     packetHeap
-	subscribers map[uint64]chan domain.PacketBatch
+	subscribers map[uint64]*subscriber
 	nextID      uint64
 	lastEmitted time.Time
 	closed      bool
 	wake        chan struct{}
 	done        chan struct{}
 	metrics     ports.Metrics
+}
+
+type subscriber struct {
+	batches          chan domain.PacketBatch
+	dropped          chan struct{}
+	disconnectOnDrop bool
 }
 
 func NewService(metrics ports.Metrics) *Service {
@@ -43,7 +49,7 @@ func (s *Service) OpenSession(id string, window time.Duration, queueSize int) er
 	if queueSize < 1 {
 		queueSize = 1
 	}
-	p := &pipeline{window: window, queueSize: queueSize, subscribers: make(map[uint64]chan domain.PacketBatch), wake: make(chan struct{}, 1), done: make(chan struct{}), metrics: s.metrics}
+	p := &pipeline{window: window, queueSize: queueSize, subscribers: make(map[uint64]*subscriber), wake: make(chan struct{}, 1), done: make(chan struct{}), metrics: s.metrics}
 	heap.Init(&p.packets)
 	s.pipelines[id] = p
 	go p.run()
@@ -78,21 +84,36 @@ func (s *Service) Publish(batch domain.PacketBatch) {
 }
 
 func (s *Service) Subscribe(ctx context.Context, sessionID string) (<-chan domain.PacketBatch, error) {
+	subscription, err := s.subscribe(ctx, sessionID, 0, false)
+	if err != nil {
+		return nil, err
+	}
+	return subscription.Batches, nil
+}
+
+func (s *Service) SubscribeLossAware(ctx context.Context, sessionID string, queueSize int) (ports.PacketSubscription, error) {
+	return s.subscribe(ctx, sessionID, queueSize, true)
+}
+
+func (s *Service) subscribe(ctx context.Context, sessionID string, queueSize int, disconnectOnDrop bool) (ports.PacketSubscription, error) {
 	s.mu.RLock()
 	p := s.pipelines[sessionID]
 	s.mu.RUnlock()
 	if p == nil {
-		return nil, ports.ErrNotFound
+		return ports.PacketSubscription{}, ports.ErrNotFound
 	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
-		return nil, ports.ErrNotFound
+		return ports.PacketSubscription{}, ports.ErrNotFound
+	}
+	if queueSize < 1 {
+		queueSize = p.queueSize
 	}
 	id := p.nextID
 	p.nextID++
-	ch := make(chan domain.PacketBatch, p.queueSize)
-	p.subscribers[id] = ch
+	sub := &subscriber{batches: make(chan domain.PacketBatch, queueSize), dropped: make(chan struct{}), disconnectOnDrop: disconnectOnDrop}
+	p.subscribers[id] = sub
 	p.mu.Unlock()
 	go func() {
 		select {
@@ -101,7 +122,7 @@ func (s *Service) Subscribe(ctx context.Context, sessionID string) (<-chan domai
 		case <-p.done:
 		}
 	}()
-	return ch, nil
+	return ports.PacketSubscription{Batches: sub.batches, Dropped: sub.dropped}, nil
 }
 
 func (s *Service) CloseSession(id string) {
@@ -147,13 +168,19 @@ func (p *pipeline) emitUntil(cutoff time.Time, all bool) {
 		}
 		heap.Pop(&p.packets)
 		p.lastEmitted = packet.Timestamp
-		for _, subscriber := range p.subscribers {
+		for id, subscriber := range p.subscribers {
 			select {
-			case subscriber <- item.batch.Clone():
+			case subscriber.batches <- item.batch.Clone():
 			default:
 				p.metrics.SubscriberDrop()
+				if subscriber.disconnectOnDrop {
+					close(subscriber.dropped)
+					close(subscriber.batches)
+					delete(p.subscribers, id)
+					continue
+				}
 			}
-			p.metrics.ObserveSubscriberQueue(float64(len(subscriber)) / float64(cap(subscriber)))
+			p.metrics.ObserveSubscriberQueue(float64(len(subscriber.batches)) / float64(cap(subscriber.batches)))
 		}
 		p.metrics.PacketsEmitted(1)
 	}
@@ -163,9 +190,9 @@ func (p *pipeline) emitUntil(cutoff time.Time, all bool) {
 func (p *pipeline) removeSubscriber(id uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if ch, ok := p.subscribers[id]; ok {
+	if subscriber, ok := p.subscribers[id]; ok {
 		delete(p.subscribers, id)
-		close(ch)
+		close(subscriber.batches)
 	}
 }
 
@@ -174,9 +201,9 @@ func (p *pipeline) close() {
 	p.mu.Lock()
 	if !p.closed {
 		p.closed = true
-		for id, ch := range p.subscribers {
+		for id, subscriber := range p.subscribers {
 			delete(p.subscribers, id)
-			close(ch)
+			close(subscriber.batches)
 		}
 		close(p.done)
 	}

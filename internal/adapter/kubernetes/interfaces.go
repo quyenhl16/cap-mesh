@@ -12,9 +12,13 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/quyenhl16/cap-mesh/internal/core/interfacealias"
 )
 
 const serviceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount"
+
+const interfaceAnnotationPrefix = "capture.capmesh.io/interface."
 
 func InterfaceAnnotations(ctx context.Context, nodeName string) (map[string]string, error) {
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
@@ -60,11 +64,34 @@ func InterfaceAnnotations(ctx context.Context, nodeName string) (map[string]stri
 	if err := json.NewDecoder(response.Body).Decode(&node); err != nil {
 		return nil, fmt.Errorf("decode node metadata: %w", err)
 	}
+	return ParseInterfaceAnnotations(node.Metadata.Annotations)
+}
+
+// ParseInterfaceAnnotations reads arbitrary aliases from annotations named
+// capture.capmesh.io/interface.<alias>. The old interface-a/b/c annotations
+// remain supported for backwards compatibility.
+func ParseInterfaceAnnotations(annotations map[string]string) (map[string]string, error) {
 	result := make(map[string]string)
 	for logical, suffix := range map[string]string{"A": "a", "B": "b", "C": "c"} {
-		if value := strings.TrimSpace(node.Metadata.Annotations["capture.capmesh.io/interface-"+suffix]); value != "" {
+		if value := strings.TrimSpace(annotations["capture.capmesh.io/interface-"+suffix]); value != "" {
 			result[logical] = value
 		}
+	}
+	for key, physical := range annotations {
+		if !strings.HasPrefix(key, interfaceAnnotationPrefix) {
+			continue
+		}
+		logical, err := interfacealias.Normalize(strings.TrimPrefix(key, interfaceAnnotationPrefix))
+		if err != nil {
+			return nil, err
+		}
+		if physical = strings.TrimSpace(physical); physical == "" {
+			return nil, fmt.Errorf("physical interface for alias %q is empty", logical)
+		}
+		result[logical] = physical
+	}
+	if len(result) > interfacealias.MaxMappings {
+		return nil, fmt.Errorf("too many interface mappings: got %d, maximum is %d", len(result), interfacealias.MaxMappings)
 	}
 	return result, nil
 }

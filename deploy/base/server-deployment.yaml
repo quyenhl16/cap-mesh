@@ -13,16 +13,16 @@ spec:
         app.kubernetes.io/name: capmesh-server
     spec:
       serviceAccountName: capmesh-server
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: server
           image: capmesh-server:latest
           imagePullPolicy: IfNotPresent
-          args:
-            - --listen=:18443
-            - --metrics-listen=:19090
-            - --tls-cert=/var/run/capmesh/tls/tls.crt
-            - --tls-key=/var/run/capmesh/tls/tls.key
-            - --subscriber-queue-size=10000
+          envFrom:
+            - configMapRef:
+                name: capmesh-config
           env:
             - name: CAPMESH_TOKEN
               valueFrom:
@@ -52,7 +52,12 @@ spec:
             - name: tls
               mountPath: /var/run/capmesh/tls
               readOnly: true
+            - name: captures
+              mountPath: /app/captures
       volumes:
         - name: tls
           secret:
             secretName: capmesh-tls
+        - name: captures
+          persistentVolumeClaim:
+            claimName: capmesh-captures

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/interfacealias"
 	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 )
 
@@ -27,15 +28,20 @@ type Service struct {
 	repository     ports.SessionRepository
 	agents         ports.AgentCommander
 	packets        ports.PacketPublisher
+	recorder       ports.CaptureRecorder
 	subscriberSize int
 	now            func() time.Time
 }
 
-func NewService(repository ports.SessionRepository, agents ports.AgentCommander, packets ports.PacketPublisher, subscriberSize int) *Service {
-	return &Service{repository: repository, agents: agents, packets: packets, subscriberSize: subscriberSize, now: time.Now}
+func NewService(repository ports.SessionRepository, agents ports.AgentCommander, packets ports.PacketPublisher, recorder ports.CaptureRecorder, subscriberSize int) *Service {
+	return &Service{repository: repository, agents: agents, packets: packets, recorder: recorder, subscriberSize: subscriberSize, now: time.Now}
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session, error) {
+	logicalInterface, err := interfacealias.Normalize(input.LogicalInterface)
+	if err != nil {
+		return domain.Session{}, err
+	}
 	if err := validate(input); err != nil {
 		return domain.Session{}, err
 	}
@@ -53,12 +59,21 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 		}
 	}
 	now := s.now()
-	session := domain.Session{ID: newID(), Nodes: nodes, LogicalInterface: strings.ToUpper(input.LogicalInterface), Filter: input.Filter, Snaplen: input.Snaplen, ReorderWindow: input.ReorderWindow, CreatedAt: now, ExpiresAt: now.Add(input.TTL), Status: domain.SessionStarting}
+	session := domain.Session{ID: newID(), Nodes: nodes, LogicalInterface: logicalInterface, Filter: input.Filter, Snaplen: input.Snaplen, ReorderWindow: input.ReorderWindow, CreatedAt: now, ExpiresAt: now.Add(input.TTL), Status: domain.SessionStarting}
 	if err := s.repository.Create(ctx, session); err != nil {
 		return domain.Session{}, err
 	}
 	if err := s.packets.OpenSession(session.ID, input.ReorderWindow, s.subscriberSize); err != nil {
 		return domain.Session{}, err
+	}
+	if s.recorder != nil {
+		if err := s.recorder.Start(session); err != nil {
+			s.packets.CloseSession(session.ID)
+			_ = session.Transition(domain.SessionFailed)
+			session.Message = "start recorder: " + err.Error()
+			_ = s.repository.Update(ctx, session)
+			return domain.Session{}, fmt.Errorf("start recorder: %w", err)
+		}
 	}
 	started := 0
 	var failures []string
@@ -142,8 +157,6 @@ func (s *Service) AgentDisconnected(ctx context.Context, node string) {
 
 func validate(input CreateInput) error {
 	switch {
-	case input.LogicalInterface != "A" && input.LogicalInterface != "B" && input.LogicalInterface != "C":
-		return errors.New("logical interface must be A, B, or C")
 	case input.Snaplen < 1 || input.Snaplen > 65535:
 		return errors.New("snaplen must be between 1 and 65535")
 	case input.TTL < time.Second || input.TTL > 24*time.Hour:

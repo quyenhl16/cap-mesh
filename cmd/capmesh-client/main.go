@@ -16,6 +16,7 @@ import (
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcapi"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcclient"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/pcapng"
+	"github.com/quyenhl16/cap-mesh/internal/core/interfacealias"
 )
 
 func main() {
@@ -23,7 +24,7 @@ func main() {
 	sessionID := flag.String("session", "", "existing capture session ID")
 	create := flag.Bool("create", false, "create a session before subscribing")
 	nodes := flag.String("nodes", "", "comma-separated node names for a new session")
-	logicalInterface := flag.String("interface", "A", "logical interface A, B, or C")
+	logicalInterface := flag.String("interface", "A", "logical interface alias configured on the agents")
 	filter := flag.String("filter", "", "BPF capture filter")
 	snaplen := flag.Uint("snaplen", 256, "packet snapshot length")
 	ttl := flag.Duration("ttl", 5*time.Minute, "capture session lifetime")
@@ -51,7 +52,12 @@ func main() {
 	authContext := grpcclient.AuthContext(ctx, *token)
 	created := false
 	if *create {
-		request := &capmeshv1.CreateSessionRequest{Nodes: splitNodes(*nodes), LogicalInterface: strings.ToUpper(*logicalInterface), Filter: *filter, Snaplen: uint32(*snaplen), TtlSeconds: uint32(ttl.Seconds()), ReorderWindowMs: uint32(reorderWindow.Milliseconds())}
+		interfaceAlias, err := interfacealias.Normalize(*logicalInterface)
+		if err != nil {
+			logger.Error("invalid interface alias", "error", err)
+			os.Exit(2)
+		}
+		request := &capmeshv1.CreateSessionRequest{Nodes: splitNodes(*nodes), LogicalInterface: interfaceAlias, Filter: *filter, Snaplen: uint32(*snaplen), TtlSeconds: uint32(ttl.Seconds()), ReorderWindowMs: uint32(reorderWindow.Milliseconds())}
 		session, err := client.CreateSession(authContext, request)
 		if err != nil {
 			logger.Error("create session failed", "error", err)

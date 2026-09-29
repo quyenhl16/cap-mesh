@@ -42,3 +42,18 @@ func TestWriterProducesMultiInterfacePCAPNG(t *testing.T) {
 		t.Fatalf("unexpected interface IDs: %v", interfaces)
 	}
 }
+
+func TestWriterReportsBufferedSize(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewWriter(&output, 4096, time.Hour)
+	packet := domain.Packet{Timestamp: time.Now(), CapturedLength: 4, OriginalLength: 4, LinkType: 1, Data: []byte{0, 1, 2, 3}}
+	if err := writer.WriteBatch(domain.PacketBatch{NodeName: "worker-1", InterfaceName: "eth0", Packets: []domain.Packet{packet}}); err != nil {
+		t.Fatal(err)
+	}
+	if writer.BytesWritten() == 0 {
+		t.Fatal("expected buffered PCAPNG size")
+	}
+	if output.Len() != 0 {
+		t.Fatal("test requires data to still be buffered")
+	}
+}

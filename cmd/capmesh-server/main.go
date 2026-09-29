@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,11 +17,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/envconfig"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcserver"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/memory"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/recording"
 	appsession "github.com/quyenhl16/cap-mesh/internal/application/session"
 	appstream "github.com/quyenhl16/cap-mesh/internal/application/stream"
+	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -35,9 +39,45 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "TLS private key file")
 	subscriberQueue := flag.Int("subscriber-queue-size", 10000, "per-subscriber packet queue size")
+	recordDirectory := flag.String("record-dir", "", "directory for server-side PCAPNG recordings; empty disables recording")
+	recordSegmentSize := flag.String("record-segment-size", "100MiB", "maximum size of each PCAPNG segment; 0 disables rotation")
+	recordMaxSessionSize := flag.String("record-max-session-size", "10GiB", "maximum total recording size per session; 0 means unlimited")
+	recordQueueSize := flag.Int("record-queue-size", 65536, "packet queue size for each session recorder")
+	if err := envconfig.Apply(flag.CommandLine, map[string]string{
+		"CAPMESH_SERVER_LISTEN":           "listen",
+		"CAPMESH_SERVER_METRICS_LISTEN":   "metrics-listen",
+		"CAPMESH_TLS_CERT":                "tls-cert",
+		"CAPMESH_TLS_KEY":                 "tls-key",
+		"CAPMESH_SUBSCRIBER_QUEUE_SIZE":   "subscriber-queue-size",
+		"CAPMESH_RECORD_DIR":              "record-dir",
+		"CAPMESH_RECORD_SEGMENT_SIZE":     "record-segment-size",
+		"CAPMESH_RECORD_MAX_SESSION_SIZE": "record-max-session-size",
+		"CAPMESH_RECORD_QUEUE_SIZE":       "record-queue-size",
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	var segmentSize, maxSessionSize int64
+	var err error
+	if *recordDirectory != "" {
+		segmentSize, err = recording.ParseSize(*recordSegmentSize)
+		if err != nil {
+			logger.Error("invalid --record-segment-size", "error", err)
+			os.Exit(2)
+		}
+		maxSessionSize, err = recording.ParseSize(*recordMaxSessionSize)
+		if err != nil {
+			logger.Error("invalid --record-max-session-size", "error", err)
+			os.Exit(2)
+		}
+		if *recordQueueSize < 1 {
+			logger.Error("--record-queue-size must be positive")
+			os.Exit(2)
+		}
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	listener, err := net.Listen("tcp", *listenAddress)
@@ -50,7 +90,19 @@ func main() {
 	serverMetrics := metricadapter.NewServer(registry)
 	packetService := appstream.NewService(serverMetrics)
 	agents := grpcserver.NewAgentRegistry()
-	sessions := appsession.NewService(memory.NewSessionRepository(), agents, packetService, *subscriberQueue)
+	var captureRecorder ports.CaptureRecorder
+	var recorderManager *recording.Manager
+	if *recordDirectory != "" {
+		recordingMetrics := recording.NewMetrics(registry)
+		recorderManager, err = recording.NewManager(recording.Config{Directory: *recordDirectory, SegmentSize: segmentSize, MaxSessionSize: maxSessionSize, QueueSize: *recordQueueSize, FlushInterval: time.Second, SyncInterval: 10 * time.Second}, packetService, logger, recordingMetrics)
+		if err != nil {
+			logger.Error("initialize capture recording failed", "error", err)
+			os.Exit(1)
+		}
+		captureRecorder = recorderManager
+		logger.Info("server-side capture recording enabled", "directory", *recordDirectory, "segment_size", segmentSize, "max_session_size", maxSessionSize, "queue_size", *recordQueueSize)
+	}
+	sessions := appsession.NewService(memory.NewSessionRepository(), agents, packetService, captureRecorder, *subscriberQueue)
 	agents.OnDisconnect(func(node string) {
 		logger.Warn("marking sessions after agent disconnect", "node", node)
 		sessions.AgentDisconnected(context.Background(), node)
@@ -110,4 +162,11 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = metricsServer.Shutdown(shutdownCtx)
+	if recorderManager != nil {
+		recordingCtx, recordingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer recordingCancel()
+		if err := recorderManager.Shutdown(recordingCtx); err != nil {
+			logger.Error("capture recording shutdown failed", "error", err)
+		}
+	}
 }

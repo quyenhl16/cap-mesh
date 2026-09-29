@@ -5,6 +5,8 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - rbac.yaml
+  - server-pv.yaml
+  - server-pvc.yaml
   - server-deployment.yaml
   - server-service.yaml
   - agent-daemonset.yaml

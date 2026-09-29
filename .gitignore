@@ -1,6 +1,7 @@
 /.cache/
 /.tools/
 /bin/
+/data/captures/
 *.pcap
 *.pcapng
 coverage.out
