@@ -41,6 +41,7 @@ message CaptureStatus {
   string node_name = 2;
   string state = 3;
   string error = 4;
+  string source_id = 5;
 }
 
 message StartCapture {
@@ -48,15 +49,33 @@ message StartCapture {
   string logical_interface = 2;
   string filter = 3;
   uint32 snaplen = 4;
+  CaptureSource source = 5;
 }
 
-message StopCapture { string session_id = 1; }
+message StopCapture {
+  string session_id = 1;
+  string source_id = 2;
+}
+
+message CaptureSource {
+  string id = 1;
+  string target_id = 2;
+  string target_type = 3;
+  string node_name = 4;
+  string logical_interface = 5;
+  string interface_name = 6;
+  string namespace = 7;
+  string pod_name = 8;
+  string pod_uid = 9;
+  string pod_ip = 10;
+}
 
 message PacketBatch {
   string session_id = 1;
   string node_name = 2;
   string interface_name = 3;
   repeated Packet packets = 4;
+  CaptureSource source = 5;
 }
 
 message Packet {
@@ -75,6 +94,27 @@ message CreateSessionRequest {
   uint32 snaplen = 4;
   uint32 ttl_seconds = 5;
   uint32 reorder_window_ms = 6;
+  repeated CaptureTarget targets = 7;
+}
+
+message CaptureTarget {
+  string id = 1;
+  InterfaceTarget interface_target = 2;
+  WorkloadTarget workload_target = 3;
+}
+
+message InterfaceTarget {
+  repeated string nodes = 1;
+  string logical_interface = 2;
+}
+
+message WorkloadTarget {
+  string namespace = 1;
+  string kind = 2;
+  string name = 3;
+  string direction = 4;
+  bool follow = 5;
+  uint32 max_pods = 6;
 }
 
 message StopSessionRequest { string session_id = 1; }
@@ -91,4 +131,5 @@ message CaptureSession {
   int64 expires_at_ns = 7;
   string status = 8;
   string message = 9;
+  repeated CaptureTarget targets = 10;
 }

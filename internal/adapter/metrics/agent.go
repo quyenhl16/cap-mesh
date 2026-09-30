@@ -45,8 +45,8 @@ func (a *Agent) SendBatch(ctx context.Context, batch domain.PacketBatch) error {
 	return nil
 }
 
-func (a *Agent) SendStatus(ctx context.Context, sessionID, state, message string) error {
-	err := a.inner.SendStatus(ctx, sessionID, state, message)
+func (a *Agent) SendStatus(ctx context.Context, sessionID, sourceID, state, message string) error {
+	err := a.inner.SendStatus(ctx, sessionID, sourceID, state, message)
 	if err != nil {
 		a.streamErrors.Inc()
 	}

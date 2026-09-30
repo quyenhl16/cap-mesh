@@ -24,9 +24,11 @@ type SessionRepository interface {
 type AgentCommand struct {
 	Kind             string
 	SessionID        string
+	SourceID         string
 	LogicalInterface string
 	Filter           string
 	Snaplen          uint32
+	Source           domain.CaptureSource
 }
 
 type AgentCommander interface {
@@ -51,6 +53,14 @@ type CaptureRecorder interface {
 	Start(domain.Session) error
 }
 
+type WorkloadResolver interface {
+	Resolve(context.Context, domain.WorkloadTarget, string) ([]domain.CaptureSource, error)
+}
+
+type PodInterfaceResolver interface {
+	Resolve(context.Context, string) (string, error)
+}
+
 type Metrics interface {
 	PacketsReceived(int)
 	PacketsEmitted(int)
@@ -66,11 +76,12 @@ type CaptureEngine interface {
 
 type AgentReporter interface {
 	SendBatch(context.Context, domain.PacketBatch) error
-	SendStatus(context.Context, string, string, string) error
+	SendStatus(context.Context, string, string, string, string) error
 }
 
 type CaptureProgress struct {
 	SessionID       string
+	SourceID        string
 	NodeName        string
 	InterfaceName   string
 	PacketsTotal    uint64

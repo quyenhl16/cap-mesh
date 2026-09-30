@@ -23,7 +23,7 @@ func NewAgentRegistry() *AgentRegistry {
 }
 
 func (r *AgentRegistry) register(node string) *agentConnection {
-	connection := &agentConnection{commands: make(chan ports.AgentCommand, 32)}
+	connection := &agentConnection{commands: make(chan ports.AgentCommand, 512)}
 	r.mu.Lock()
 	r.agents[node] = connection
 	r.mu.Unlock()

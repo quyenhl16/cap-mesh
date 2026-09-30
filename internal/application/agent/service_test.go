@@ -15,6 +15,23 @@ type fakeEngine struct {
 	errors  chan error
 }
 
+type captureCall struct {
+	interfaceName string
+	filter        string
+}
+
+type multiEngine struct {
+	mu    sync.Mutex
+	calls []captureCall
+}
+
+func (e *multiEngine) Capture(_ context.Context, iface, filter string, _ uint32) (<-chan domain.Packet, <-chan error, error) {
+	e.mu.Lock()
+	e.calls = append(e.calls, captureCall{interfaceName: iface, filter: filter})
+	e.mu.Unlock()
+	return make(chan domain.Packet), make(chan error), nil
+}
+
 func (f *fakeEngine) Capture(context.Context, string, string, uint32) (<-chan domain.Packet, <-chan error, error) {
 	return f.packets, f.errors, nil
 }
@@ -43,7 +60,7 @@ func (f *fakeReporter) SendBatch(_ context.Context, batch domain.PacketBatch) er
 	return nil
 }
 
-func (f *fakeReporter) SendStatus(_ context.Context, _ string, state, _ string) error {
+func (f *fakeReporter) SendStatus(_ context.Context, _, _ string, state, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.status = append(f.status, state)
@@ -82,6 +99,28 @@ func TestStartNormalizesCustomInterfaceAlias(t *testing.T) {
 	service := NewService("worker-1", map[string]string{"data-east": "ens192"}, engine, &fakeReporter{}, nil, 64, time.Hour, 0)
 	if err := service.Start(context.Background(), StartRequest{SessionID: "s1", LogicalInterface: "DATA-East", Snaplen: 256}); err != nil {
 		t.Fatal(err)
+	}
+	service.StopAll()
+}
+
+func TestStartsMultipleSourcesInOneSession(t *testing.T) {
+	engine := &multiEngine{}
+	service := NewService("worker-1", map[string]string{"uplink": "eth0", "data": "eth1"}, engine, &fakeReporter{}, nil, 64, time.Hour, 0)
+	for _, source := range []domain.CaptureSource{
+		{ID: "source-uplink", TargetType: "interface", LogicalInterface: "uplink"},
+		{ID: "source-pod", TargetType: "workload", InterfaceName: "cali123", PodIP: "10.0.0.10"},
+	} {
+		if err := service.Start(context.Background(), StartRequest{SessionID: "s1", Source: source, Snaplen: 256}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if len(engine.calls) != 2 || engine.calls[0].interfaceName != "eth0" || engine.calls[1].interfaceName != "cali123" {
+		t.Fatalf("unexpected capture calls: %#v", engine.calls)
+	}
+	if len(service.captures["s1"]) != 2 {
+		t.Fatalf("active sources = %d, want 2", len(service.captures["s1"]))
 	}
 	service.StopAll()
 }

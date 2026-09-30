@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/capmes
 
 FROM debian:bookworm-slim
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dumpcap ca-certificates \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dumpcap iproute2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/capmesh-agent /usr/local/bin/capmesh-agent
 EXPOSE 9091

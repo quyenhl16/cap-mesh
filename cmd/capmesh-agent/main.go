@@ -19,6 +19,7 @@ import (
 	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/capture"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/envconfig"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcapi"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcclient"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/kubernetes"
 	logadapter "github.com/quyenhl16/cap-mesh/internal/adapter/logging"
@@ -129,10 +130,6 @@ func main() {
 		logger.Error("too many interface mappings", "count", len(interfaces), "maximum", interfacealias.MaxMappings)
 		os.Exit(2)
 	}
-	if len(interfaces) == 0 {
-		logger.Error("at least one interface mapping is required")
-		os.Exit(2)
-	}
 	if *captureLogInterval < 0 {
 		logger.Error("--capture-log-interval must not be negative")
 		os.Exit(2)
@@ -144,6 +141,7 @@ func main() {
 	engine := metricadapter.NewCaptureEngine(capture.Dumpcap{Binary: *dumpcap, Logger: logger}, agentMetrics)
 	progressLogger := logadapter.NewCaptureProgress(logger)
 	service := appagent.NewService(*node, interfaces, engine, agentMetrics, progressLogger, 64, 10*time.Millisecond, *captureLogInterval)
+	service.SetPodInterfaceResolver(capture.IPRouteResolver{Binary: "ip"})
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -159,10 +157,10 @@ func main() {
 			transport := grpcclient.NewAgentTransport(connection, reporter, *token)
 			err = transport.Connect(ctx, *node, interfaces, func(command *capmeshv1.AgentCommand) error {
 				if start := command.GetStart(); start != nil {
-					return service.Start(ctx, appagent.StartRequest{SessionID: start.GetSessionId(), LogicalInterface: start.GetLogicalInterface(), Filter: start.GetFilter(), Snaplen: start.GetSnaplen()})
+					return service.Start(ctx, appagent.StartRequest{SessionID: start.GetSessionId(), LogicalInterface: start.GetLogicalInterface(), Filter: start.GetFilter(), Snaplen: start.GetSnaplen(), Source: grpcapi.CaptureSourceFromProto(start.GetSource())})
 				}
 				if stop := command.GetStop(); stop != nil {
-					return service.Stop(ctx, stop.GetSessionId())
+					return service.Stop(ctx, stop.GetSessionId(), stop.GetSourceId())
 				}
 				return nil
 			})

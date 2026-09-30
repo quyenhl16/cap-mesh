@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -19,12 +20,27 @@ import (
 	"github.com/quyenhl16/cap-mesh/internal/core/interfacealias"
 )
 
+type stringList []string
+
+func (values *stringList) String() string { return strings.Join(*values, ",") }
+func (values *stringList) Set(value string) error {
+	*values = append(*values, value)
+	return nil
+}
+
 func main() {
 	server := flag.String("server", "127.0.0.1:18443", "capmesh-server address")
 	sessionID := flag.String("session", "", "existing capture session ID")
 	create := flag.Bool("create", false, "create a session before subscribing")
 	nodes := flag.String("nodes", "", "comma-separated node names for a new session")
-	logicalInterface := flag.String("interface", "A", "logical interface alias configured on the agents")
+	var logicalInterfaces stringList
+	flag.Var(&logicalInterfaces, "interface", "logical interface alias configured on the agents; repeat to capture multiple interfaces")
+	workloadNamespace := flag.String("namespace", "", "namespace of the workload capture target")
+	workloadKind := flag.String("workload-kind", "", "workload kind: statefulset or deployment")
+	workloadName := flag.String("workload-name", "", "name of the StatefulSet or Deployment")
+	direction := flag.String("direction", "egress", "workload traffic direction: egress, ingress, or both")
+	follow := flag.Bool("follow", true, "follow workload scale, restart, and reschedule changes")
+	maxPods := flag.Uint("max-pods", 100, "maximum pods allowed for a workload target")
 	filter := flag.String("filter", "", "BPF capture filter")
 	snaplen := flag.Uint("snaplen", 256, "packet snapshot length")
 	ttl := flag.Duration("ttl", 5*time.Minute, "capture session lifetime")
@@ -52,12 +68,36 @@ func main() {
 	authContext := grpcclient.AuthContext(ctx, *token)
 	created := false
 	if *create {
-		interfaceAlias, err := interfacealias.Normalize(*logicalInterface)
-		if err != nil {
-			logger.Error("invalid interface alias", "error", err)
+		workloadRequested := *workloadNamespace != "" || *workloadKind != "" || *workloadName != ""
+		if workloadRequested && (*workloadNamespace == "" || *workloadKind == "" || *workloadName == "") {
+			logger.Error("--namespace, --workload-kind, and --workload-name must be provided together")
 			os.Exit(2)
 		}
-		request := &capmeshv1.CreateSessionRequest{Nodes: splitNodes(*nodes), LogicalInterface: interfaceAlias, Filter: *filter, Snaplen: uint32(*snaplen), TtlSeconds: uint32(ttl.Seconds()), ReorderWindowMs: uint32(reorderWindow.Milliseconds())}
+		if !workloadRequested && len(logicalInterfaces) == 0 {
+			logicalInterfaces = append(logicalInterfaces, "A")
+		}
+		request := &capmeshv1.CreateSessionRequest{Filter: *filter, Snaplen: uint32(*snaplen), TtlSeconds: uint32(ttl.Seconds()), ReorderWindowMs: uint32(reorderWindow.Milliseconds())}
+		if !workloadRequested && len(logicalInterfaces) == 1 {
+			interfaceAlias, err := interfacealias.Normalize(logicalInterfaces[0])
+			if err != nil {
+				logger.Error("invalid interface alias", "error", err)
+				os.Exit(2)
+			}
+			request.Nodes = splitNodes(*nodes)
+			request.LogicalInterface = interfaceAlias
+		} else {
+			for index, logicalInterface := range logicalInterfaces {
+				interfaceAlias, err := interfacealias.Normalize(logicalInterface)
+				if err != nil {
+					logger.Error("invalid interface alias", "error", err)
+					os.Exit(2)
+				}
+				request.Targets = append(request.Targets, &capmeshv1.CaptureTarget{Id: fmt.Sprintf("interface-%d", index+1), InterfaceTarget: &capmeshv1.InterfaceTarget{Nodes: splitNodes(*nodes), LogicalInterface: interfaceAlias}})
+			}
+			if workloadRequested {
+				request.Targets = append(request.Targets, &capmeshv1.CaptureTarget{Id: "workload-1", WorkloadTarget: &capmeshv1.WorkloadTarget{Namespace: *workloadNamespace, Kind: *workloadKind, Name: *workloadName, Direction: *direction, Follow: *follow, MaxPods: uint32(*maxPods)}})
+			}
+		}
 		session, err := client.CreateSession(authContext, request)
 		if err != nil {
 			logger.Error("create session failed", "error", err)

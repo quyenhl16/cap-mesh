@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -41,6 +42,15 @@ func (f *fakeRecorder) Start(domain.Session) error {
 type fakePackets struct {
 	opened bool
 	closed bool
+}
+
+type fakeWorkloadResolver struct {
+	sources []domain.CaptureSource
+	err     error
+}
+
+func (r *fakeWorkloadResolver) Resolve(context.Context, domain.WorkloadTarget, string) ([]domain.CaptureSource, error) {
+	return append([]domain.CaptureSource(nil), r.sources...), r.err
 }
 
 func (f *fakePackets) OpenSession(string, time.Duration, int) error { f.opened = true; return nil }
@@ -116,6 +126,89 @@ func TestCreateNormalizesCustomInterfaceAlias(t *testing.T) {
 	}
 	if len(agents.commands) != 1 || agents.commands[0].LogicalInterface != "data-east" {
 		t.Fatalf("unexpected commands: %#v", agents.commands)
+	}
+}
+
+func TestCreateStartsMultipleInterfaceTargetsInOneSession(t *testing.T) {
+	agents := &fakeAgents{nodes: []string{"worker-1"}}
+	service := NewService(memory.NewSessionRepository(), agents, &fakePackets{}, nil, 100)
+	targets := []domain.CaptureTarget{
+		{ID: "uplink", Interface: &domain.InterfaceTarget{Nodes: []string{"worker-1"}, LogicalInterface: "UPLINK"}},
+		{ID: "data", Interface: &domain.InterfaceTarget{Nodes: []string{"worker-1"}, LogicalInterface: "DATA"}},
+	}
+	captureSession, err := service.Create(context.Background(), CreateInput{Targets: targets, Snaplen: 256, TTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captureSession.Status != domain.SessionRunning || len(agents.commands) != 2 {
+		t.Fatalf("unexpected session or commands: %#v %#v", captureSession, agents.commands)
+	}
+	if agents.commands[0].SessionID != agents.commands[1].SessionID || agents.commands[0].SourceID == agents.commands[1].SourceID {
+		t.Fatalf("expected distinct sources in one session: %#v", agents.commands)
+	}
+}
+
+func TestCreateWorkloadTargetBuildsDirectionFilter(t *testing.T) {
+	agents := &fakeAgents{nodes: []string{"worker-1"}}
+	resolver := &fakeWorkloadResolver{sources: []domain.CaptureSource{{ID: "pod:t:uid", TargetID: "t", TargetType: "workload", NodeName: "worker-1", InterfaceName: "cali123", PodIP: "10.0.0.10"}}}
+	service := NewService(memory.NewSessionRepository(), agents, &fakePackets{}, nil, 100)
+	service.SetWorkloadResolver(resolver, time.Hour)
+	targets := []domain.CaptureTarget{{ID: "t", Workload: &domain.WorkloadTarget{Namespace: "payment", Kind: "deployment", Name: "api", Direction: "egress", MaxPods: 10}}}
+	if _, err := service.Create(context.Background(), CreateInput{Targets: targets, Filter: "tcp port 443", Snaplen: 256, TTL: time.Minute}); err != nil {
+		t.Fatal(err)
+	}
+	if len(agents.commands) != 1 || agents.commands[0].Filter != "(src host 10.0.0.10) and (tcp port 443)" {
+		t.Fatalf("unexpected workload command: %#v", agents.commands)
+	}
+}
+
+func TestReconcileReplacesRestartedWorkloadPod(t *testing.T) {
+	agents := &fakeAgents{nodes: []string{"worker-1"}}
+	resolver := &fakeWorkloadResolver{sources: []domain.CaptureSource{{ID: "pod:t:old", TargetID: "t", TargetType: "workload", NodeName: "worker-1", InterfaceName: "cali-old", PodUID: "old", PodIP: "10.0.0.10"}}}
+	service := NewService(memory.NewSessionRepository(), agents, &fakePackets{}, nil, 100)
+	service.SetWorkloadResolver(resolver, time.Hour)
+	targets := []domain.CaptureTarget{{ID: "t", Workload: &domain.WorkloadTarget{Namespace: "payment", Kind: "statefulset", Name: "worker", Direction: "egress", Follow: true, MaxPods: 10}}}
+	captureSession, err := service.Create(context.Background(), CreateInput{Targets: targets, Snaplen: 256, TTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.sources = []domain.CaptureSource{{ID: "pod:t:new", TargetID: "t", TargetType: "workload", NodeName: "worker-1", InterfaceName: "cali-new", PodUID: "new", PodIP: "10.0.0.11"}}
+	service.reconcile(context.Background(), captureSession.ID)
+	if len(agents.commands) != 3 || agents.commands[1].Kind != "stop" || agents.commands[1].SourceID != "pod:t:old" || agents.commands[2].Kind != "start" || agents.commands[2].SourceID != "pod:t:new" {
+		t.Fatalf("unexpected reconcile commands: %#v", agents.commands)
+	}
+	_, _ = service.Stop(context.Background(), captureSession.ID)
+}
+
+func TestFailedSourceIsRemovedSoReconcileCanRetry(t *testing.T) {
+	agents := &fakeAgents{nodes: []string{"worker-1"}}
+	source := domain.CaptureSource{ID: "pod:t:uid", TargetID: "t", TargetType: "workload", NodeName: "worker-1", PodIP: "10.0.0.10"}
+	resolver := &fakeWorkloadResolver{sources: []domain.CaptureSource{source}}
+	service := NewService(memory.NewSessionRepository(), agents, &fakePackets{}, nil, 100)
+	service.SetWorkloadResolver(resolver, time.Hour)
+	targets := []domain.CaptureTarget{{ID: "t", Workload: &domain.WorkloadTarget{Namespace: "payment", Kind: "deployment", Name: "api", Direction: "egress", Follow: true, MaxPods: 10}}}
+	captureSession, err := service.Create(context.Background(), CreateInput{Targets: targets, Snaplen: 256, TTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.CaptureStatus(context.Background(), "worker-1", captureSession.ID, source.ID, "FAILED", "route unavailable")
+	service.reconcile(context.Background(), captureSession.ID)
+	if len(agents.commands) != 2 || agents.commands[1].Kind != "start" || agents.commands[1].SourceID != source.ID {
+		t.Fatalf("expected failed source to be retried: %#v", agents.commands)
+	}
+	_, _ = service.Stop(context.Background(), captureSession.ID)
+}
+
+func TestSourceDistributionLimitPerNode(t *testing.T) {
+	sources := make([]domain.CaptureSource, maxSourcesPerNode+1)
+	for index := range sources {
+		sources[index] = domain.CaptureSource{ID: fmt.Sprintf("source-%d", index), NodeName: "worker-1"}
+	}
+	if err := validateSourceDistribution(sources[:maxSourcesPerNode]); err != nil {
+		t.Fatalf("limit should be accepted: %v", err)
+	}
+	if err := validateSourceDistribution(sources); err == nil {
+		t.Fatal("expected per-node source limit error")
 	}
 }
 

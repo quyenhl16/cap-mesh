@@ -28,8 +28,8 @@ func (r *Reporter) SendBatch(ctx context.Context, batch domain.PacketBatch) erro
 	return r.send(ctx, &capmeshv1.AgentMessage{Batch: grpcapi.PacketBatchToProto(batch)})
 }
 
-func (r *Reporter) SendStatus(ctx context.Context, sessionID, state, message string) error {
-	return r.send(ctx, &capmeshv1.AgentMessage{Status: &capmeshv1.CaptureStatus{SessionId: sessionID, State: state, Error: message}})
+func (r *Reporter) SendStatus(ctx context.Context, sessionID, sourceID, state, message string) error {
+	return r.send(ctx, &capmeshv1.AgentMessage{Status: &capmeshv1.CaptureStatus{SessionId: sessionID, SourceId: sourceID, State: state, Error: message}})
 }
 
 func (r *Reporter) send(ctx context.Context, message *capmeshv1.AgentMessage) error {
@@ -110,7 +110,7 @@ func (t *AgentTransport) Connect(ctx context.Context, node string, interfaces ma
 		case command := <-incoming:
 			if err := handle(command); err != nil {
 				if start := command.GetStart(); start != nil {
-					_ = t.reporter.SendStatus(ctx, start.GetSessionId(), "FAILED", err.Error())
+					_ = t.reporter.SendStatus(ctx, start.GetSessionId(), start.GetSource().GetId(), "FAILED", err.Error())
 				}
 			}
 		case <-heartbeat.C:

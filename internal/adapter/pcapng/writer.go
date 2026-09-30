@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/gopacket/gopacket"
@@ -47,7 +48,7 @@ func (w *Writer) BytesWritten() int64 {
 }
 
 func (w *Writer) WriteBatch(batch domain.PacketBatch) error {
-	key := batch.NodeName + "/" + batch.InterfaceName
+	key := interfaceDisplayName(batch)
 	for _, packet := range batch.Packets {
 		interfaceID, err := w.ensureInterface(key, packet.LinkType)
 		if err != nil {
@@ -68,6 +69,23 @@ func (w *Writer) WriteBatch(batch domain.PacketBatch) error {
 		}
 	}
 	return nil
+}
+
+func interfaceDisplayName(batch domain.PacketBatch) string {
+	parts := []string{batch.NodeName}
+	if batch.Source.TargetType == "workload" {
+		parts = append(parts, batch.Source.Namespace, batch.Source.PodName)
+	} else if batch.Source.LogicalInterface != "" {
+		parts = append(parts, batch.Source.LogicalInterface)
+	}
+	parts = append(parts, batch.InterfaceName)
+	var clean []string
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			clean = append(clean, part)
+		}
+	}
+	return strings.Join(clean, "/")
 }
 
 func (w *Writer) ensureInterface(name string, rawLinkType uint32) (int, error) {

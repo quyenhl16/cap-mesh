@@ -27,7 +27,7 @@ func NewCaptureServer(sessions *appsession.Service, packets ports.PacketPublishe
 }
 
 func (s *CaptureServer) CreateSession(ctx context.Context, request *capmeshv1.CreateSessionRequest) (*capmeshv1.CaptureSession, error) {
-	session, err := s.sessions.Create(ctx, appsession.CreateInput{Nodes: request.GetNodes(), LogicalInterface: request.GetLogicalInterface(), Filter: request.GetFilter(), Snaplen: request.GetSnaplen(), TTL: time.Duration(request.GetTtlSeconds()) * time.Second, ReorderWindow: time.Duration(request.GetReorderWindowMs()) * time.Millisecond})
+	session, err := s.sessions.Create(ctx, appsession.CreateInput{Nodes: request.GetNodes(), LogicalInterface: request.GetLogicalInterface(), Targets: grpcapi.CaptureTargetsFromProto(request.GetTargets()), Filter: request.GetFilter(), Snaplen: request.GetSnaplen(), TTL: time.Duration(request.GetTtlSeconds()) * time.Second, ReorderWindow: time.Duration(request.GetReorderWindowMs()) * time.Millisecond})
 	if err != nil {
 		return nil, rpcError(err)
 	}

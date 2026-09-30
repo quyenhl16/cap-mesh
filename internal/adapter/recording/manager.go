@@ -38,23 +38,24 @@ type Manager struct {
 }
 
 type metadata struct {
-	SchemaVersion    int               `json:"schema_version"`
-	SessionID        string            `json:"session_id"`
-	Status           string            `json:"status"`
-	Nodes            []string          `json:"nodes"`
-	InterfaceAlias   string            `json:"interface_alias"`
-	Filter           string            `json:"filter,omitempty"`
-	Snaplen          uint32            `json:"snaplen"`
-	StartedAt        time.Time         `json:"started_at"`
-	FinishedAt       *time.Time        `json:"finished_at,omitempty"`
-	SegmentSizeLimit int64             `json:"segment_size_limit"`
-	SessionSizeLimit int64             `json:"session_size_limit"`
-	TotalFileSize    int64             `json:"total_file_size"`
-	PacketCount      uint64            `json:"packet_count"`
-	CapturedBytes    uint64            `json:"captured_bytes"`
-	Truncated        bool              `json:"truncated"`
-	Error            string            `json:"error,omitempty"`
-	Segments         []segmentMetadata `json:"segments"`
+	SchemaVersion    int                    `json:"schema_version"`
+	SessionID        string                 `json:"session_id"`
+	Status           string                 `json:"status"`
+	Nodes            []string               `json:"nodes"`
+	InterfaceAlias   string                 `json:"interface_alias"`
+	Targets          []domain.CaptureTarget `json:"targets,omitempty"`
+	Filter           string                 `json:"filter,omitempty"`
+	Snaplen          uint32                 `json:"snaplen"`
+	StartedAt        time.Time              `json:"started_at"`
+	FinishedAt       *time.Time             `json:"finished_at,omitempty"`
+	SegmentSizeLimit int64                  `json:"segment_size_limit"`
+	SessionSizeLimit int64                  `json:"session_size_limit"`
+	TotalFileSize    int64                  `json:"total_file_size"`
+	PacketCount      uint64                 `json:"packet_count"`
+	CapturedBytes    uint64                 `json:"captured_bytes"`
+	Truncated        bool                   `json:"truncated"`
+	Error            string                 `json:"error,omitempty"`
+	Segments         []segmentMetadata      `json:"segments"`
 }
 
 type segmentMetadata struct {
@@ -177,6 +178,7 @@ func (m *Manager) Start(session domain.Session) error {
 			Status:           "RECORDING",
 			Nodes:            append([]string(nil), session.Nodes...),
 			InterfaceAlias:   session.LogicalInterface,
+			Targets:          session.Targets,
 			Filter:           session.Filter,
 			Snaplen:          session.Snaplen,
 			StartedAt:        session.CreatedAt.UTC(),

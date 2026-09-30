@@ -1,6 +1,7 @@
 package grpcserver
 
 import (
+	"context"
 	"io"
 	"log/slog"
 
@@ -16,6 +17,11 @@ type AgentServer struct {
 	registry *AgentRegistry
 	packets  ports.PacketPublisher
 	logger   *slog.Logger
+	onStatus func(context.Context, string, string, string, string, string)
+}
+
+func (s *AgentServer) OnCaptureStatus(handler func(context.Context, string, string, string, string, string)) {
+	s.onStatus = handler
 }
 
 func NewAgentServer(registry *AgentRegistry, packets ports.PacketPublisher, logger *slog.Logger) *AgentServer {
@@ -62,7 +68,7 @@ func (s *AgentServer) Connect(stream capmeshv1.AgentService_ConnectServer) error
 			}
 		case message := <-incoming:
 			if batch := message.GetBatch(); batch != nil {
-				key := batch.GetSessionId() + "/" + batch.GetInterfaceName()
+				key := batch.GetSessionId() + "/" + batch.GetSource().GetId() + "/" + batch.GetInterfaceName()
 				for _, packet := range batch.GetPackets() {
 					if previous := sequences[key]; previous != 0 && packet.GetSequenceNumber() != previous+1 {
 						s.logger.Warn("packet sequence gap", "node", node, "session_id", batch.GetSessionId(), "interface", batch.GetInterfaceName(), "expected", previous+1, "actual", packet.GetSequenceNumber())
@@ -72,7 +78,10 @@ func (s *AgentServer) Connect(stream capmeshv1.AgentService_ConnectServer) error
 				s.packets.Publish(grpcapi.PacketBatchFromProto(batch))
 			}
 			if captureStatus := message.GetStatus(); captureStatus != nil {
-				s.logger.Info("agent capture status", "node", node, "session_id", captureStatus.GetSessionId(), "state", captureStatus.GetState(), "error", captureStatus.GetError())
+				s.logger.Info("agent capture status", "node", node, "session_id", captureStatus.GetSessionId(), "source_id", captureStatus.GetSourceId(), "state", captureStatus.GetState(), "error", captureStatus.GetError())
+				if s.onStatus != nil {
+					s.onStatus(stream.Context(), node, captureStatus.GetSessionId(), captureStatus.GetSourceId(), captureStatus.GetState(), captureStatus.GetError())
+				}
 			}
 		case err := <-receiveErrors:
 			if err == io.EOF {
@@ -87,7 +96,7 @@ func (s *AgentServer) Connect(stream capmeshv1.AgentService_ConnectServer) error
 
 func commandToProto(command ports.AgentCommand) *capmeshv1.AgentCommand {
 	if command.Kind == "stop" {
-		return &capmeshv1.AgentCommand{Stop: &capmeshv1.StopCapture{SessionId: command.SessionID}}
+		return &capmeshv1.AgentCommand{Stop: &capmeshv1.StopCapture{SessionId: command.SessionID, SourceId: command.SourceID}}
 	}
-	return &capmeshv1.AgentCommand{Start: &capmeshv1.StartCapture{SessionId: command.SessionID, LogicalInterface: command.LogicalInterface, Filter: command.Filter, Snaplen: command.Snaplen}}
+	return &capmeshv1.AgentCommand{Start: &capmeshv1.StartCapture{SessionId: command.SessionID, LogicalInterface: command.LogicalInterface, Filter: command.Filter, Snaplen: command.Snaplen, Source: grpcapi.CaptureSourceToProto(command.Source)}}
 }

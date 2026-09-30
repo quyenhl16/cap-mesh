@@ -19,6 +19,7 @@ import (
 	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/envconfig"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcserver"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/kubernetes"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/memory"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/recording"
@@ -43,16 +44,18 @@ func main() {
 	recordSegmentSize := flag.String("record-segment-size", "100MiB", "maximum size of each PCAPNG segment; 0 disables rotation")
 	recordMaxSessionSize := flag.String("record-max-session-size", "10GiB", "maximum total recording size per session; 0 means unlimited")
 	recordQueueSize := flag.Int("record-queue-size", 65536, "packet queue size for each session recorder")
+	workloadReconcileInterval := flag.Duration("workload-reconcile-interval", 5*time.Second, "interval for reconciling workload pods and Calico endpoints")
 	if err := envconfig.Apply(flag.CommandLine, map[string]string{
-		"CAPMESH_SERVER_LISTEN":           "listen",
-		"CAPMESH_SERVER_METRICS_LISTEN":   "metrics-listen",
-		"CAPMESH_TLS_CERT":                "tls-cert",
-		"CAPMESH_TLS_KEY":                 "tls-key",
-		"CAPMESH_SUBSCRIBER_QUEUE_SIZE":   "subscriber-queue-size",
-		"CAPMESH_RECORD_DIR":              "record-dir",
-		"CAPMESH_RECORD_SEGMENT_SIZE":     "record-segment-size",
-		"CAPMESH_RECORD_MAX_SESSION_SIZE": "record-max-session-size",
-		"CAPMESH_RECORD_QUEUE_SIZE":       "record-queue-size",
+		"CAPMESH_SERVER_LISTEN":               "listen",
+		"CAPMESH_SERVER_METRICS_LISTEN":       "metrics-listen",
+		"CAPMESH_TLS_CERT":                    "tls-cert",
+		"CAPMESH_TLS_KEY":                     "tls-key",
+		"CAPMESH_SUBSCRIBER_QUEUE_SIZE":       "subscriber-queue-size",
+		"CAPMESH_RECORD_DIR":                  "record-dir",
+		"CAPMESH_RECORD_SEGMENT_SIZE":         "record-segment-size",
+		"CAPMESH_RECORD_MAX_SESSION_SIZE":     "record-max-session-size",
+		"CAPMESH_RECORD_QUEUE_SIZE":           "record-queue-size",
+		"CAPMESH_WORKLOAD_RECONCILE_INTERVAL": "workload-reconcile-interval",
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -103,6 +106,11 @@ func main() {
 		logger.Info("server-side capture recording enabled", "directory", *recordDirectory, "segment_size", segmentSize, "max_session_size", maxSessionSize, "queue_size", *recordQueueSize)
 	}
 	sessions := appsession.NewService(memory.NewSessionRepository(), agents, packetService, captureRecorder, *subscriberQueue)
+	if *workloadReconcileInterval <= 0 {
+		logger.Error("--workload-reconcile-interval must be positive")
+		os.Exit(2)
+	}
+	sessions.SetWorkloadResolver(kubernetes.NewWorkloadResolver(), *workloadReconcileInterval)
 	agents.OnDisconnect(func(node string) {
 		logger.Warn("marking sessions after agent disconnect", "node", node)
 		sessions.AgentDisconnected(context.Background(), node)
@@ -128,7 +136,9 @@ func main() {
 		logger.Warn("gRPC is running without TLS; use only for local development")
 	}
 	grpcServer := grpc.NewServer(options...)
-	capmeshv1.RegisterAgentServiceServer(grpcServer, grpcserver.NewAgentServer(agents, packetService, logger))
+	agentServer := grpcserver.NewAgentServer(agents, packetService, logger)
+	agentServer.OnCaptureStatus(sessions.CaptureStatus)
+	capmeshv1.RegisterAgentServiceServer(grpcServer, agentServer)
 	capmeshv1.RegisterCaptureServiceServer(grpcServer, grpcserver.NewCaptureServer(sessions, packetService, logger))
 
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}

@@ -15,6 +15,7 @@ type PacketBatch struct {
 	SessionID     string
 	NodeName      string
 	InterfaceName string
+	Source        CaptureSource
 	Packets       []Packet
 }
 

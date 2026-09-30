@@ -33,6 +33,7 @@ func (r *CaptureProgress) ReportCaptureProgress(progress ports.CaptureProgress) 
 		message,
 		"node", progress.NodeName,
 		"session_id", progress.SessionID,
+		"source_id", progress.SourceID,
 		"interface", progress.InterfaceName,
 		"packets_total", progress.PacketsTotal,
 		"bytes_total", progress.BytesTotal,
