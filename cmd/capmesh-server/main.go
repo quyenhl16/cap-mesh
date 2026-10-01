@@ -146,6 +146,7 @@ func main() {
 	capmeshv1.RegisterAgentServiceServer(grpcServer, agentServer)
 	captureServer := grpcserver.NewCaptureServer(sessions, packetService, logger)
 	captureServer.SetContinuousCapture(continuousCapture)
+	captureServer.SetAgentRegistry(agents)
 	capmeshv1.RegisterCaptureServiceServer(grpcServer, captureServer)
 
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}

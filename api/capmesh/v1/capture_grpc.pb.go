@@ -122,6 +122,8 @@ const (
 	CaptureService_StartContinuousCapture_FullMethodName = "/capmesh.v1.CaptureService/StartContinuousCapture"
 	CaptureService_StopContinuousCapture_FullMethodName  = "/capmesh.v1.CaptureService/StopContinuousCapture"
 	CaptureService_GetContinuousCapture_FullMethodName   = "/capmesh.v1.CaptureService/GetContinuousCapture"
+	CaptureService_ListAgents_FullMethodName             = "/capmesh.v1.CaptureService/ListAgents"
+	CaptureService_ListSessions_FullMethodName           = "/capmesh.v1.CaptureService/ListSessions"
 )
 
 // CaptureServiceClient is the client API for CaptureService service.
@@ -135,6 +137,8 @@ type CaptureServiceClient interface {
 	StartContinuousCapture(ctx context.Context, in *StartContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error)
 	StopContinuousCapture(ctx context.Context, in *StopContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error)
 	GetContinuousCapture(ctx context.Context, in *GetContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error)
+	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error)
+	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
 }
 
 type captureServiceClient struct {
@@ -224,6 +228,26 @@ func (c *captureServiceClient) GetContinuousCapture(ctx context.Context, in *Get
 	return out, nil
 }
 
+func (c *captureServiceClient) ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAgentsResponse)
+	err := c.cc.Invoke(ctx, CaptureService_ListAgents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *captureServiceClient) ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSessionsResponse)
+	err := c.cc.Invoke(ctx, CaptureService_ListSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CaptureServiceServer is the server API for CaptureService service.
 // All implementations must embed UnimplementedCaptureServiceServer
 // for forward compatibility.
@@ -235,6 +259,8 @@ type CaptureServiceServer interface {
 	StartContinuousCapture(context.Context, *StartContinuousCaptureRequest) (*ContinuousCapture, error)
 	StopContinuousCapture(context.Context, *StopContinuousCaptureRequest) (*ContinuousCapture, error)
 	GetContinuousCapture(context.Context, *GetContinuousCaptureRequest) (*ContinuousCapture, error)
+	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error)
+	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
 	mustEmbedUnimplementedCaptureServiceServer()
 }
 
@@ -265,6 +291,12 @@ func (UnimplementedCaptureServiceServer) StopContinuousCapture(context.Context, 
 }
 func (UnimplementedCaptureServiceServer) GetContinuousCapture(context.Context, *GetContinuousCaptureRequest) (*ContinuousCapture, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetContinuousCapture not implemented")
+}
+func (UnimplementedCaptureServiceServer) ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListAgents not implemented")
+}
+func (UnimplementedCaptureServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListSessions not implemented")
 }
 func (UnimplementedCaptureServiceServer) mustEmbedUnimplementedCaptureServiceServer() {}
 func (UnimplementedCaptureServiceServer) testEmbeddedByValue()                        {}
@@ -406,6 +438,42 @@ func _CaptureService_GetContinuousCapture_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CaptureService_ListAgents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAgentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).ListAgents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_ListAgents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).ListAgents(ctx, req.(*ListAgentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CaptureService_ListSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).ListSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_ListSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).ListSessions(ctx, req.(*ListSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CaptureService_ServiceDesc is the grpc.ServiceDesc for CaptureService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -436,6 +504,14 @@ var CaptureService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetContinuousCapture",
 			Handler:    _CaptureService_GetContinuousCapture_Handler,
+		},
+		{
+			MethodName: "ListAgents",
+			Handler:    _CaptureService_ListAgents_Handler,
+		},
+		{
+			MethodName: "ListSessions",
+			Handler:    _CaptureService_ListSessions_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

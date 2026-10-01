@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,6 +25,16 @@ type WorkloadResolver struct {
 	baseURL string
 	token   string
 	err     error
+}
+
+type apiResponseError struct {
+	Path       string
+	StatusCode int
+	Status     string
+}
+
+func (e *apiResponseError) Error() string {
+	return fmt.Sprintf("Kubernetes API %s returned %s", e.Path, e.Status)
 }
 
 func NewWorkloadResolver() *WorkloadResolver {
@@ -125,8 +136,8 @@ func (r *WorkloadResolver) Resolve(ctx context.Context, target domain.WorkloadTa
 		}
 	}
 
-	var endpoints workloadEndpointList
-	if err := r.get(ctx, "/apis/crd.projectcalico.org/v1/namespaces/"+namespace+"/workloadendpoints", nil, &endpoints); err != nil {
+	endpoints, err := r.listWorkloadEndpoints(ctx, namespace)
+	if err != nil {
 		return nil, fmt.Errorf("list Calico workload endpoints: %w", err)
 	}
 	var sources []domain.CaptureSource
@@ -149,6 +160,31 @@ func (r *WorkloadResolver) Resolve(ctx context.Context, target domain.WorkloadTa
 	}
 	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
 	return sources, nil
+}
+
+func (r *WorkloadResolver) listWorkloadEndpoints(ctx context.Context, namespace string) (workloadEndpointList, error) {
+	paths := []string{
+		"/apis/crd.projectcalico.org/v1/namespaces/" + namespace + "/workloadendpoints",
+		"/apis/projectcalico.org/v3/namespaces/" + namespace + "/workloadendpoints",
+	}
+	for _, path := range paths {
+		var endpoints workloadEndpointList
+		err := r.get(ctx, path, nil, &endpoints)
+		if err == nil {
+			return endpoints, nil
+		}
+		if !isAPIStatus(err, http.StatusNotFound) {
+			return workloadEndpointList{}, err
+		}
+	}
+	// WorkloadEndpoint is optional. The agent resolves an empty interface name
+	// on the Pod's node with `ip route get <pod-ip>`.
+	return workloadEndpointList{}, nil
+}
+
+func isAPIStatus(err error, statusCode int) bool {
+	var responseError *apiResponseError
+	return errors.As(err, &responseError) && responseError.StatusCode == statusCode
 }
 
 func (r *WorkloadResolver) initialize() error {
@@ -200,7 +236,7 @@ func (r *WorkloadResolver) get(ctx context.Context, path string, query url.Value
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Kubernetes API %s returned %s", path, response.Status)
+		return &apiResponseError{Path: path, StatusCode: response.StatusCode, Status: response.Status}
 	}
 	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
 		return fmt.Errorf("decode Kubernetes API response: %w", err)

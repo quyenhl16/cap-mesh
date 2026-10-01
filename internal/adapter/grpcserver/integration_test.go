@@ -26,7 +26,9 @@ func TestCaptureFlowOverGRPC(t *testing.T) {
 	sessions := appsession.NewService(memory.NewSessionRepository(), agents, packets, nil, 10)
 	server := grpc.NewServer()
 	capmeshv1.RegisterAgentServiceServer(server, NewAgentServer(agents, packets, logger))
-	capmeshv1.RegisterCaptureServiceServer(server, NewCaptureServer(sessions, packets, logger))
+	captureServer := NewCaptureServer(sessions, packets, logger)
+	captureServer.SetAgentRegistry(agents)
+	capmeshv1.RegisterCaptureServiceServer(server, captureServer)
 	go func() { _ = server.Serve(listener) }()
 	defer server.Stop()
 
@@ -51,6 +53,13 @@ func TestCaptureFlowOverGRPC(t *testing.T) {
 	}
 
 	captureClient := capmeshv1.NewCaptureServiceClient(connection)
+	agentList, err := captureClient.ListAgents(ctx, &capmeshv1.ListAgentsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agentList.GetAgents()) != 1 || agentList.GetAgents()[0].GetNodeName() != "worker-1" || agentList.GetAgents()[0].GetInterfaces()["A"] != "eth0" || agentList.GetAgents()[0].GetStatus() != "CONNECTED" {
+		t.Fatalf("unexpected agent list: %#v", agentList.GetAgents())
+	}
 	session, err := captureClient.CreateSession(ctx, &capmeshv1.CreateSessionRequest{Nodes: []string{"worker-1"}, LogicalInterface: "A", Snaplen: 256, TtlSeconds: 60})
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +70,13 @@ func TestCaptureFlowOverGRPC(t *testing.T) {
 	}
 	if command.GetStart().GetSessionId() != session.GetId() {
 		t.Fatalf("unexpected start command: %#v", command)
+	}
+	sessionList, err := captureClient.ListSessions(ctx, &capmeshv1.ListSessionsRequest{Status: "RUNNING", Mode: "NORMAL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessionList.GetSessions()) != 1 || sessionList.GetSessions()[0].GetId() != session.GetId() {
+		t.Fatalf("unexpected session list: %#v", sessionList.GetSessions())
 	}
 
 	packetStream, err := captureClient.StreamPackets(ctx, &capmeshv1.StreamPacketsRequest{SessionId: session.GetId()})

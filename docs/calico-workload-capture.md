@@ -16,10 +16,12 @@ capmesh-client --create \
 
 ## Workload capture
 
-The server reads the workload selector, verifies the Pod owner chain, and maps
-each Pod to the host-side Calico interface through the Calico
-WorkloadEndpoint. The agent falls back to `ip route get <pod-ip>` when the
-WorkloadEndpoint does not yet contain an interface name.
+The server reads the workload selector and verifies the Pod owner chain. It
+first tries Calico WorkloadEndpoints from `crd.projectcalico.org/v1`, then
+`projectcalico.org/v3`. If neither API is installed, or an endpoint does not
+contain an interface name, the agent on the Pod's node falls back to
+`ip route get <pod-ip>`. A missing WorkloadEndpoint API is therefore supported;
+authorization, transport, and malformed-response errors are still reported.
 
 ```bash
 capmesh-client --create \
@@ -63,8 +65,9 @@ not deduplicate observations from different capture points.
 ## Kubernetes permissions
 
 The server service account needs read access to Pods, Deployments, StatefulSets,
-ReplicaSets, and Calico WorkloadEndpoints. The base manifests include this
-RBAC. Workload membership is reconciled every five seconds by default; change
+ReplicaSets, and, when installed, Calico WorkloadEndpoints in either supported
+API group. The base manifests include this RBAC. Workload membership is
+reconciled every five seconds by default; change
 `CAPMESH_WORKLOAD_RECONCILE_INTERVAL` to adjust it.
 
 Phase 1 limits a session to 100 workload Pods in total and 50 active capture

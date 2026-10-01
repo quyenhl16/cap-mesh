@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -35,6 +36,8 @@ func main() {
 	continuousStart := flag.Bool("continuous-start", false, "start the singleton server-owned continuous capture and exit")
 	continuousStop := flag.Bool("continuous-stop", false, "stop the singleton continuous capture and exit")
 	continuousStatus := flag.Bool("continuous-status", false, "show singleton continuous capture status and exit")
+	listAgents := flag.Bool("list-agents", false, "list connected agents and their interface mappings")
+	listSessions := flag.Bool("list-sessions", false, "list running normal capture sessions")
 	nodes := flag.String("nodes", "", "comma-separated node names for a new session")
 	var logicalInterfaces stringList
 	flag.Var(&logicalInterfaces, "interface", "logical interface alias configured on the agents; repeat to capture multiple interfaces")
@@ -55,9 +58,9 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	controlModes := boolCount(*continuousStart, *continuousStop, *continuousStatus)
+	controlModes := boolCount(*continuousStart, *continuousStop, *continuousStatus, *listAgents, *listSessions)
 	if controlModes > 1 || (controlModes > 0 && (*create || *sessionID != "")) {
-		logger.Error("--continuous-start, --continuous-stop, --continuous-status, --create, and --session are mutually exclusive")
+		logger.Error("--continuous-start, --continuous-stop, --continuous-status, --list-agents, --list-sessions, --create, and --session are mutually exclusive")
 		os.Exit(2)
 	}
 	if !*create && *sessionID == "" && controlModes == 0 {
@@ -74,6 +77,24 @@ func main() {
 	defer connection.Close()
 	client := capmeshv1.NewCaptureServiceClient(connection)
 	authContext := grpcclient.AuthContext(ctx, *token)
+	if *listAgents {
+		response, err := client.ListAgents(authContext, &capmeshv1.ListAgentsRequest{})
+		if err != nil {
+			logger.Error("list agents failed", "error", err)
+			os.Exit(1)
+		}
+		printAgents(response)
+		return
+	}
+	if *listSessions {
+		response, err := client.ListSessions(authContext, &capmeshv1.ListSessionsRequest{Status: "RUNNING", Mode: "NORMAL"})
+		if err != nil {
+			logger.Error("list sessions failed", "error", err)
+			os.Exit(1)
+		}
+		printSessions(response)
+		return
+	}
 	if *continuousStop {
 		capture, err := client.StopContinuousCapture(authContext, &capmeshv1.StopContinuousCaptureRequest{})
 		if err != nil {
@@ -231,6 +252,58 @@ func boolCount(values ...bool) int {
 
 func printContinuousCapture(capture *capmeshv1.ContinuousCapture) {
 	fmt.Printf("session_id=%s status=%s retained_size=%d segments=%d message=%q\n", capture.GetSessionId(), capture.GetStatus(), capture.GetRetainedSize(), capture.GetSegmentCount(), capture.GetMessage())
+}
+
+func printAgents(response *capmeshv1.ListAgentsResponse) {
+	fmt.Printf("agents=%d\n", len(response.GetAgents()))
+	for _, agent := range response.GetAgents() {
+		aliases := make([]string, 0, len(agent.GetInterfaces()))
+		for alias := range agent.GetInterfaces() {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+		mappings := make([]string, 0, len(aliases))
+		for _, alias := range aliases {
+			mappings = append(mappings, alias+"="+agent.GetInterfaces()[alias])
+		}
+		fmt.Printf("node=%s status=%s connected_at=%s last_seen_at=%s interfaces=%q\n",
+			agent.GetNodeName(), agent.GetStatus(), formatTimestamp(agent.GetConnectedAtNs()), formatTimestamp(agent.GetLastSeenAtNs()), strings.Join(mappings, ","))
+	}
+}
+
+func formatTimestamp(timestamp int64) string {
+	if timestamp == 0 {
+		return "-"
+	}
+	return time.Unix(0, timestamp).UTC().Format(time.RFC3339)
+}
+
+func printSessions(response *capmeshv1.ListSessionsResponse) {
+	fmt.Printf("sessions=%d\n", len(response.GetSessions()))
+	for _, captureSession := range response.GetSessions() {
+		fmt.Printf("session_id=%s mode=%s status=%s nodes=%q created_at=%s expires_at=%s targets=%q filter=%q message=%q\n",
+			captureSession.GetId(), captureSession.GetMode(), captureSession.GetStatus(), strings.Join(captureSession.GetNodes(), ","),
+			formatTimestamp(captureSession.GetCreatedAtNs()), formatTimestamp(captureSession.GetExpiresAtNs()),
+			formatTargets(captureSession.GetTargets()), captureSession.GetFilter(), captureSession.GetMessage())
+	}
+}
+
+func formatTargets(targets []*capmeshv1.CaptureTarget) string {
+	values := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if interfaceTarget := target.GetInterfaceTarget(); interfaceTarget != nil {
+			nodes := strings.Join(interfaceTarget.GetNodes(), ",")
+			if nodes == "" {
+				nodes = "*"
+			}
+			values = append(values, "interface:"+interfaceTarget.GetLogicalInterface()+"@"+nodes)
+			continue
+		}
+		if workload := target.GetWorkloadTarget(); workload != nil {
+			values = append(values, "workload:"+workload.GetNamespace()+"/"+workload.GetKind()+"/"+workload.GetName()+"("+workload.GetDirection()+")")
+		}
+	}
+	return strings.Join(values, ";")
 }
 
 func splitNodes(value string) []string {

@@ -35,6 +35,11 @@ type CreateInput struct {
 	Continuous       bool
 }
 
+type ListInput struct {
+	Status string
+	Mode   string
+}
+
 type runtimeSession struct {
 	cancel  context.CancelFunc
 	sources map[string]domain.CaptureSource
@@ -205,6 +210,38 @@ func (s *Service) Stop(ctx context.Context, id string) (domain.Session, error) {
 
 func (s *Service) Get(ctx context.Context, id string) (domain.Session, error) {
 	return s.repository.Get(ctx, id)
+}
+
+func (s *Service) List(ctx context.Context, input ListInput) ([]domain.Session, error) {
+	status := domain.SessionStatus(strings.ToUpper(strings.TrimSpace(input.Status)))
+	mode := domain.SessionMode(strings.ToUpper(strings.TrimSpace(input.Mode)))
+	if status != "" && status != domain.SessionStarting && status != domain.SessionRunning && status != domain.SessionStopping && status != domain.SessionStopped && status != domain.SessionFailed {
+		return nil, fmt.Errorf("invalid session status %q", input.Status)
+	}
+	if mode != "" && mode != domain.SessionModeNormal && mode != domain.SessionModeContinuous {
+		return nil, fmt.Errorf("invalid session mode %q", input.Mode)
+	}
+	sessions, err := s.repository.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]domain.Session, 0, len(sessions))
+	for _, captureSession := range sessions {
+		if status != "" && captureSession.Status != status {
+			continue
+		}
+		if mode != "" && captureSession.Mode != mode {
+			continue
+		}
+		filtered = append(filtered, captureSession)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].CreatedAt.Equal(filtered[j].CreatedAt) {
+			return filtered[i].ID < filtered[j].ID
+		}
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+	return filtered, nil
 }
 
 func (s *Service) AgentDisconnected(ctx context.Context, node string) {

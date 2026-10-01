@@ -83,6 +83,35 @@ func TestCreateAndStopSession(t *testing.T) {
 	}
 }
 
+func TestListFiltersSessionsAndSortsNewestFirst(t *testing.T) {
+	repository := memory.NewSessionRepository()
+	created := time.Now().UTC()
+	for _, captureSession := range []domain.Session{
+		{ID: "normal-old", Mode: domain.SessionModeNormal, Status: domain.SessionRunning, CreatedAt: created},
+		{ID: "normal-new", Mode: domain.SessionModeNormal, Status: domain.SessionRunning, CreatedAt: created.Add(time.Second)},
+		{ID: "normal-stopped", Mode: domain.SessionModeNormal, Status: domain.SessionStopped, CreatedAt: created.Add(2 * time.Second)},
+		{ID: "continuous", Mode: domain.SessionModeContinuous, Status: domain.SessionRunning, CreatedAt: created.Add(3 * time.Second)},
+	} {
+		if err := repository.Create(context.Background(), captureSession); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := NewService(repository, &fakeAgents{}, &fakePackets{}, nil, 100)
+	sessions, err := service.List(context.Background(), ListInput{Status: "running", Mode: "normal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 || sessions[0].ID != "normal-new" || sessions[1].ID != "normal-old" {
+		t.Fatalf("unexpected sessions: %#v", sessions)
+	}
+	if _, err := service.List(context.Background(), ListInput{Status: "unknown"}); err == nil {
+		t.Fatal("expected invalid status to fail")
+	}
+	if _, err := service.List(context.Background(), ListInput{Mode: "unknown"}); err == nil {
+		t.Fatal("expected invalid mode to fail")
+	}
+}
+
 func TestCreateStartsRecorderBeforeAgents(t *testing.T) {
 	recorder := &fakeRecorder{}
 	agents := &fakeAgents{nodes: []string{"worker-1"}}

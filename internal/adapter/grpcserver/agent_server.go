@@ -39,7 +39,7 @@ func (s *AgentServer) Connect(stream capmeshv1.AgentService_ConnectServer) error
 	}
 	node := registration.GetNodeName()
 	sequences := make(map[string]uint64)
-	connection := s.registry.register(node)
+	connection := s.registry.register(node, registration.GetInterfaces())
 	defer s.registry.unregister(node, connection)
 	s.logger.Info("agent connected", "node", node, "interfaces", registration.GetInterfaces())
 	defer s.logger.Info("agent disconnected", "node", node)
@@ -67,6 +67,7 @@ func (s *AgentServer) Connect(stream capmeshv1.AgentService_ConnectServer) error
 				return err
 			}
 		case message := <-incoming:
+			s.registry.touch(node, connection)
 			if batch := message.GetBatch(); batch != nil {
 				key := batch.GetSessionId() + "/" + batch.GetSource().GetId() + "/" + batch.GetInterfaceName()
 				for _, packet := range batch.GetPackets() {

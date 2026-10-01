@@ -16,6 +16,8 @@ service CaptureService {
   rpc StartContinuousCapture(StartContinuousCaptureRequest) returns (ContinuousCapture);
   rpc StopContinuousCapture(StopContinuousCaptureRequest) returns (ContinuousCapture);
   rpc GetContinuousCapture(GetContinuousCaptureRequest) returns (ContinuousCapture);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
 }
 
 message AgentMessage {
@@ -117,6 +119,29 @@ message ContinuousCapture {
   uint64 retained_size = 4;
   uint32 segment_count = 5;
   string message = 6;
+}
+
+message ListAgentsRequest {}
+
+message ListAgentsResponse {
+  repeated AgentInfo agents = 1;
+}
+
+message AgentInfo {
+  string node_name = 1;
+  map<string, string> interfaces = 2;
+  int64 connected_at_ns = 3;
+  int64 last_seen_at_ns = 4;
+  string status = 5;
+}
+
+message ListSessionsRequest {
+  string status = 1;
+  string mode = 2;
+}
+
+message ListSessionsResponse {
+  repeated CaptureSession sessions = 1;
 }
 
 message CaptureTarget {

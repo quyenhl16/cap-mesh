@@ -23,6 +23,8 @@ func TestRoleTokens(t *testing.T) {
 		{"/capmesh.v1.CaptureService/StartContinuousCapture", "viewer", codes.PermissionDenied},
 		{"/capmesh.v1.CaptureService/StopContinuousCapture", "admin", codes.OK},
 		{"/capmesh.v1.CaptureService/GetContinuousCapture", "viewer", codes.OK},
+		{"/capmesh.v1.CaptureService/ListAgents", "viewer", codes.OK},
+		{"/capmesh.v1.CaptureService/ListSessions", "viewer", codes.OK},
 		{"/capmesh.v1.AgentService/Connect", "agent", codes.OK},
 		{"/capmesh.v1.AgentService/Connect", "admin", codes.PermissionDenied},
 	}

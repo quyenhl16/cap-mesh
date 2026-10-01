@@ -41,7 +41,7 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "replicasets"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["crd.projectcalico.org"]
+  - apiGroups: ["crd.projectcalico.org", "projectcalico.org"]
     resources: ["workloadendpoints"]
     verbs: ["get", "list", "watch"]
 ---

@@ -22,10 +22,15 @@ type CaptureServer struct {
 	packets    ports.PacketPublisher
 	logger     *slog.Logger
 	continuous *appcontinuous.Service
+	agents     *AgentRegistry
 }
 
 func (s *CaptureServer) SetContinuousCapture(service *appcontinuous.Service) {
 	s.continuous = service
+}
+
+func (s *CaptureServer) SetAgentRegistry(registry *AgentRegistry) {
+	s.agents = registry
 }
 
 func NewCaptureServer(sessions *appsession.Service, packets ports.PacketPublisher, logger *slog.Logger) *CaptureServer {
@@ -107,6 +112,36 @@ func (s *CaptureServer) GetContinuousCapture(ctx context.Context, _ *capmeshv1.G
 		return nil, status.Error(codes.Unavailable, "continuous capture is not configured")
 	}
 	return continuousCaptureToProto(s.continuous.Get(ctx)), nil
+}
+
+func (s *CaptureServer) ListAgents(context.Context, *capmeshv1.ListAgentsRequest) (*capmeshv1.ListAgentsResponse, error) {
+	if s.agents == nil {
+		return nil, status.Error(codes.Unavailable, "agent registry is not configured")
+	}
+	connected := s.agents.ConnectedAgents()
+	response := &capmeshv1.ListAgentsResponse{Agents: make([]*capmeshv1.AgentInfo, 0, len(connected))}
+	for _, agent := range connected {
+		response.Agents = append(response.Agents, &capmeshv1.AgentInfo{
+			NodeName:      agent.NodeName,
+			Interfaces:    agent.Interfaces,
+			ConnectedAtNs: agent.ConnectedAt.UnixNano(),
+			LastSeenAtNs:  agent.LastSeenAt.UnixNano(),
+			Status:        "CONNECTED",
+		})
+	}
+	return response, nil
+}
+
+func (s *CaptureServer) ListSessions(ctx context.Context, request *capmeshv1.ListSessionsRequest) (*capmeshv1.ListSessionsResponse, error) {
+	sessions, err := s.sessions.List(ctx, appsession.ListInput{Status: request.GetStatus(), Mode: request.GetMode()})
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	response := &capmeshv1.ListSessionsResponse{Sessions: make([]*capmeshv1.CaptureSession, 0, len(sessions))}
+	for _, captureSession := range sessions {
+		response.Sessions = append(response.Sessions, grpcapi.SessionToProto(captureSession))
+	}
+	return response, nil
 }
 
 func continuousCaptureToProto(capture appcontinuous.Capture) *capmeshv1.ContinuousCapture {

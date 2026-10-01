@@ -122,10 +122,85 @@ Server nhận `--tls-cert` và `--tls-key`. Agent/client dùng trust store hệ 
 ```bash
 capmesh-server --tls-cert server.crt --tls-key server.key --token "$CAPMESH_TOKEN"
 capmesh-agent --server capture.example.com:18443 --tls-ca ca.crt --interface management=eth0
-capmesh-client --server capture.example.com:18443 --session SESSION_ID --tls-ca ca.crt | wireshark -k -i -
+capmesh-client \
+  --server capture.example.com:18443 \
+  --session SESSION_ID \
+  --tls-ca ./ca.crt \
+  --tls-server-name capture.example.com \
+  --token "$CAPMESH_TOKEN" \
+| wireshark -k -i -
 ```
 
 Không truyền token trên command line nếu có thể; dùng biến môi trường `CAPMESH_TOKEN` để tránh lộ qua process list.
+
+Ví dụ đầy đủ khi client kết nối tới Kubernetes Service bằng ClusterIP,
+trong khi certificate có DNS SAN là `capmesh-server`:
+
+```bash
+export CAPMESH_TOKEN='replace-me'
+
+./bin/capmesh-client \
+  --server 10.106.142.184:18443 \
+  --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server \
+  --token "$CAPMESH_TOKEN" \
+  --create \
+  --namespace pramf01 \
+  --workload-kind statefulset \
+  --workload-name mm \
+  --direction both \
+  --follow=true \
+  --max-pods 100 \
+| wireshark -k -i -
+```
+
+`--server` là địa chỉ thực tế dùng để kết nối. `--tls-server-name` phải
+trùng chính xác với một DNS SAN trong certificate, ví dụ
+`capmesh-server` hoặc `capmesh-server.capmesh.svc`. Nếu kết nối bằng IP mà
+không truyền `--tls-server-name`, certificate phải chứa chính IP đó trong IP SAN.
+
+Liệt kê các agent đang kết nối, node và toàn bộ ánh xạ alias/interface:
+
+```bash
+./bin/capmesh-client \
+  --server 10.106.142.184:18443 \
+  --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server \
+  --token "$CAPMESH_TOKEN" \
+  --list-agents
+```
+
+Ví dụ output:
+
+```text
+agents=1
+node=worker-01 status=CONNECTED connected_at=2026-10-01T10:00:00Z last_seen_at=2026-10-01T10:00:10Z interfaces="data=ens224,management=ens192"
+```
+
+Danh sách chỉ gồm agent đang có gRPC stream tới server; agent bị ngắt kết nối
+sẽ được loại khỏi kết quả. Viewer, admin và shared token đều có quyền gọi API này.
+
+Liệt kê các session thông thường đang chạy:
+
+```bash
+./bin/capmesh-client \
+  --server 10.106.142.184:18443 \
+  --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server \
+  --token "$CAPMESH_TOKEN" \
+  --list-sessions
+```
+
+Ví dụ output:
+
+```text
+sessions=1
+session_id=session-abcd mode=NORMAL status=RUNNING nodes="worker-01" created_at=2026-10-01T10:00:00Z expires_at=2026-10-01T10:05:00Z targets="workload:pramf01/statefulset/mm(both)" filter="" message=""
+```
+
+API `ListSessions` hỗ trợ lọc theo `status` và `mode`; CLI `--list-sessions`
+mặc định yêu cầu `RUNNING/NORMAL`. Danh sách nằm trong memory và sẽ mất khi
+server restart. Viewer, admin và shared token đều có quyền xem.
 
 `--token` là token dùng chung tương thích cấu hình đơn giản. Khi cần tách quyền, server hỗ trợ `--agent-token`, `--viewer-token`, `--admin-token` (hoặc các biến `CAPMESH_AGENT_TOKEN`, `CAPMESH_VIEWER_TOKEN`, `CAPMESH_ADMIN_TOKEN`). Agent chỉ được mở stream agent; viewer chỉ được xem metadata/packet; admin được tạo, xem và dừng session.
 
