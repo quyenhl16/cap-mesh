@@ -115,15 +115,18 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	CaptureService_CreateSession_FullMethodName          = "/capmesh.v1.CaptureService/CreateSession"
-	CaptureService_StopSession_FullMethodName            = "/capmesh.v1.CaptureService/StopSession"
-	CaptureService_GetSession_FullMethodName             = "/capmesh.v1.CaptureService/GetSession"
-	CaptureService_StreamPackets_FullMethodName          = "/capmesh.v1.CaptureService/StreamPackets"
-	CaptureService_StartContinuousCapture_FullMethodName = "/capmesh.v1.CaptureService/StartContinuousCapture"
-	CaptureService_StopContinuousCapture_FullMethodName  = "/capmesh.v1.CaptureService/StopContinuousCapture"
-	CaptureService_GetContinuousCapture_FullMethodName   = "/capmesh.v1.CaptureService/GetContinuousCapture"
-	CaptureService_ListAgents_FullMethodName             = "/capmesh.v1.CaptureService/ListAgents"
-	CaptureService_ListSessions_FullMethodName           = "/capmesh.v1.CaptureService/ListSessions"
+	CaptureService_CreateSession_FullMethodName           = "/capmesh.v1.CaptureService/CreateSession"
+	CaptureService_StopSession_FullMethodName             = "/capmesh.v1.CaptureService/StopSession"
+	CaptureService_GetSession_FullMethodName              = "/capmesh.v1.CaptureService/GetSession"
+	CaptureService_StreamPackets_FullMethodName           = "/capmesh.v1.CaptureService/StreamPackets"
+	CaptureService_StartContinuousCapture_FullMethodName  = "/capmesh.v1.CaptureService/StartContinuousCapture"
+	CaptureService_StopContinuousCapture_FullMethodName   = "/capmesh.v1.CaptureService/StopContinuousCapture"
+	CaptureService_GetContinuousCapture_FullMethodName    = "/capmesh.v1.CaptureService/GetContinuousCapture"
+	CaptureService_ListAgents_FullMethodName              = "/capmesh.v1.CaptureService/ListAgents"
+	CaptureService_ListSessions_FullMethodName            = "/capmesh.v1.CaptureService/ListSessions"
+	CaptureService_StartWorkloadLogCapture_FullMethodName = "/capmesh.v1.CaptureService/StartWorkloadLogCapture"
+	CaptureService_StopWorkloadLogCapture_FullMethodName  = "/capmesh.v1.CaptureService/StopWorkloadLogCapture"
+	CaptureService_GetWorkloadLogCapture_FullMethodName   = "/capmesh.v1.CaptureService/GetWorkloadLogCapture"
 )
 
 // CaptureServiceClient is the client API for CaptureService service.
@@ -139,6 +142,9 @@ type CaptureServiceClient interface {
 	GetContinuousCapture(ctx context.Context, in *GetContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error)
 	ListAgents(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error)
 	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
+	StartWorkloadLogCapture(ctx context.Context, in *StartWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error)
+	StopWorkloadLogCapture(ctx context.Context, in *StopWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error)
+	GetWorkloadLogCapture(ctx context.Context, in *GetWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error)
 }
 
 type captureServiceClient struct {
@@ -248,6 +254,36 @@ func (c *captureServiceClient) ListSessions(ctx context.Context, in *ListSession
 	return out, nil
 }
 
+func (c *captureServiceClient) StartWorkloadLogCapture(ctx context.Context, in *StartWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkloadLogCapture)
+	err := c.cc.Invoke(ctx, CaptureService_StartWorkloadLogCapture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *captureServiceClient) StopWorkloadLogCapture(ctx context.Context, in *StopWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkloadLogCapture)
+	err := c.cc.Invoke(ctx, CaptureService_StopWorkloadLogCapture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *captureServiceClient) GetWorkloadLogCapture(ctx context.Context, in *GetWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkloadLogCapture)
+	err := c.cc.Invoke(ctx, CaptureService_GetWorkloadLogCapture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CaptureServiceServer is the server API for CaptureService service.
 // All implementations must embed UnimplementedCaptureServiceServer
 // for forward compatibility.
@@ -261,6 +297,9 @@ type CaptureServiceServer interface {
 	GetContinuousCapture(context.Context, *GetContinuousCaptureRequest) (*ContinuousCapture, error)
 	ListAgents(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error)
 	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
+	StartWorkloadLogCapture(context.Context, *StartWorkloadLogCaptureRequest) (*WorkloadLogCapture, error)
+	StopWorkloadLogCapture(context.Context, *StopWorkloadLogCaptureRequest) (*WorkloadLogCapture, error)
+	GetWorkloadLogCapture(context.Context, *GetWorkloadLogCaptureRequest) (*WorkloadLogCapture, error)
 	mustEmbedUnimplementedCaptureServiceServer()
 }
 
@@ -297,6 +336,15 @@ func (UnimplementedCaptureServiceServer) ListAgents(context.Context, *ListAgents
 }
 func (UnimplementedCaptureServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListSessions not implemented")
+}
+func (UnimplementedCaptureServiceServer) StartWorkloadLogCapture(context.Context, *StartWorkloadLogCaptureRequest) (*WorkloadLogCapture, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartWorkloadLogCapture not implemented")
+}
+func (UnimplementedCaptureServiceServer) StopWorkloadLogCapture(context.Context, *StopWorkloadLogCaptureRequest) (*WorkloadLogCapture, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StopWorkloadLogCapture not implemented")
+}
+func (UnimplementedCaptureServiceServer) GetWorkloadLogCapture(context.Context, *GetWorkloadLogCaptureRequest) (*WorkloadLogCapture, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetWorkloadLogCapture not implemented")
 }
 func (UnimplementedCaptureServiceServer) mustEmbedUnimplementedCaptureServiceServer() {}
 func (UnimplementedCaptureServiceServer) testEmbeddedByValue()                        {}
@@ -474,6 +522,60 @@ func _CaptureService_ListSessions_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CaptureService_StartWorkloadLogCapture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartWorkloadLogCaptureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).StartWorkloadLogCapture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_StartWorkloadLogCapture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).StartWorkloadLogCapture(ctx, req.(*StartWorkloadLogCaptureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CaptureService_StopWorkloadLogCapture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopWorkloadLogCaptureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).StopWorkloadLogCapture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_StopWorkloadLogCapture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).StopWorkloadLogCapture(ctx, req.(*StopWorkloadLogCaptureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CaptureService_GetWorkloadLogCapture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWorkloadLogCaptureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).GetWorkloadLogCapture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_GetWorkloadLogCapture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).GetWorkloadLogCapture(ctx, req.(*GetWorkloadLogCaptureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CaptureService_ServiceDesc is the grpc.ServiceDesc for CaptureService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -512,6 +614,18 @@ var CaptureService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSessions",
 			Handler:    _CaptureService_ListSessions_Handler,
+		},
+		{
+			MethodName: "StartWorkloadLogCapture",
+			Handler:    _CaptureService_StartWorkloadLogCapture_Handler,
+		},
+		{
+			MethodName: "StopWorkloadLogCapture",
+			Handler:    _CaptureService_StopWorkloadLogCapture_Handler,
+		},
+		{
+			MethodName: "GetWorkloadLogCapture",
+			Handler:    _CaptureService_GetWorkloadLogCapture_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -9,7 +9,9 @@ import (
 	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcapi"
 	appcontinuous "github.com/quyenhl16/cap-mesh/internal/application/continuous"
+	applogcapture "github.com/quyenhl16/cap-mesh/internal/application/logcapture"
 	appsession "github.com/quyenhl16/cap-mesh/internal/application/session"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -23,6 +25,7 @@ type CaptureServer struct {
 	logger     *slog.Logger
 	continuous *appcontinuous.Service
 	agents     *AgentRegistry
+	logCapture *applogcapture.Service
 }
 
 func (s *CaptureServer) SetContinuousCapture(service *appcontinuous.Service) {
@@ -31,6 +34,10 @@ func (s *CaptureServer) SetContinuousCapture(service *appcontinuous.Service) {
 
 func (s *CaptureServer) SetAgentRegistry(registry *AgentRegistry) {
 	s.agents = registry
+}
+
+func (s *CaptureServer) SetWorkloadLogCapture(service *applogcapture.Service) {
+	s.logCapture = service
 }
 
 func NewCaptureServer(sessions *appsession.Service, packets ports.PacketPublisher, logger *slog.Logger) *CaptureServer {
@@ -144,12 +151,65 @@ func (s *CaptureServer) ListSessions(ctx context.Context, request *capmeshv1.Lis
 	return response, nil
 }
 
+func (s *CaptureServer) StartWorkloadLogCapture(ctx context.Context, request *capmeshv1.StartWorkloadLogCaptureRequest) (*capmeshv1.WorkloadLogCapture, error) {
+	if s.logCapture == nil {
+		return nil, status.Error(codes.Unavailable, "workload log capture is not configured")
+	}
+	capture, err := s.logCapture.Start(ctx, applogcapture.StartInput{Targets: workloadLogTargetsFromProto(request.GetTargets()), SinceSeconds: request.GetSinceSeconds()})
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	s.logger.Info("workload log capture started", "run_id", capture.RunID, "targets", len(capture.Targets))
+	return workloadLogCaptureToProto(capture), nil
+}
+
+func (s *CaptureServer) StopWorkloadLogCapture(ctx context.Context, _ *capmeshv1.StopWorkloadLogCaptureRequest) (*capmeshv1.WorkloadLogCapture, error) {
+	if s.logCapture == nil {
+		return nil, status.Error(codes.Unavailable, "workload log capture is not configured")
+	}
+	capture, err := s.logCapture.Stop(ctx)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	s.logger.Info("workload log capture stopped", "run_id", capture.RunID)
+	return workloadLogCaptureToProto(capture), nil
+}
+
+func (s *CaptureServer) GetWorkloadLogCapture(context.Context, *capmeshv1.GetWorkloadLogCaptureRequest) (*capmeshv1.WorkloadLogCapture, error) {
+	if s.logCapture == nil {
+		return nil, status.Error(codes.Unavailable, "workload log capture is not configured")
+	}
+	return workloadLogCaptureToProto(s.logCapture.Get()), nil
+}
+
 func continuousCaptureToProto(capture appcontinuous.Capture) *capmeshv1.ContinuousCapture {
 	var startedAt int64
 	if !capture.StartedAt.IsZero() {
 		startedAt = capture.StartedAt.UnixNano()
 	}
 	return &capmeshv1.ContinuousCapture{SessionId: capture.SessionID, Status: string(capture.Status), StartedAtNs: startedAt, RetainedSize: uint64(max(capture.RetainedSize, 0)), SegmentCount: uint32(capture.SegmentCount), Message: capture.Message}
+}
+
+func workloadLogTargetsFromProto(targets []*capmeshv1.WorkloadLogTarget) []domain.WorkloadLogTarget {
+	result := make([]domain.WorkloadLogTarget, 0, len(targets))
+	for _, target := range targets {
+		if target == nil {
+			continue
+		}
+		result = append(result, domain.WorkloadLogTarget{Namespace: target.GetNamespace(), Kind: target.GetKind(), Name: target.GetName(), Containers: append([]string(nil), target.GetContainers()...), MaxPods: target.GetMaxPods()})
+	}
+	return result
+}
+
+func workloadLogCaptureToProto(capture applogcapture.Capture) *capmeshv1.WorkloadLogCapture {
+	result := &capmeshv1.WorkloadLogCapture{RunId: capture.RunID, Status: string(capture.Status), RetainedSize: uint64(max(capture.RetainedSize, 0)), SegmentCount: uint32(capture.SegmentCount), ActiveStreams: uint32(capture.ActiveStreams), Message: capture.Message}
+	if !capture.StartedAt.IsZero() {
+		result.StartedAtNs = capture.StartedAt.UnixNano()
+	}
+	for _, target := range capture.Targets {
+		result.Targets = append(result.Targets, &capmeshv1.WorkloadLogTarget{Namespace: target.Namespace, Kind: target.Kind, Name: target.Name, Containers: append([]string(nil), target.Containers...), MaxPods: target.MaxPods})
+	}
+	return result
 }
 
 func rpcError(err error) error {

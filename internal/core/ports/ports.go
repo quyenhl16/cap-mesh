@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
@@ -59,6 +60,21 @@ type RecordingUsageProvider interface {
 
 type WorkloadResolver interface {
 	Resolve(context.Context, domain.WorkloadTarget, string) ([]domain.CaptureSource, error)
+}
+
+type WorkloadLogSource interface {
+	ResolvePods(context.Context, domain.WorkloadLogTarget) ([]domain.WorkloadPod, error)
+	StreamLogs(context.Context, domain.PodLogRequest) (io.ReadCloser, error)
+}
+
+type WorkloadLogRecorder interface {
+	Write(domain.LogRecord) error
+	Close(string, string) error
+	Usage() domain.LogRecordingUsage
+}
+
+type WorkloadLogRecorderFactory interface {
+	Start(domain.LogCaptureRun) (WorkloadLogRecorder, error)
 }
 
 type PodInterfaceResolver interface {

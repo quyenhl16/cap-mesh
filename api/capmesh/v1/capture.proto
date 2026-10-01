@@ -18,6 +18,9 @@ service CaptureService {
   rpc GetContinuousCapture(GetContinuousCaptureRequest) returns (ContinuousCapture);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc StartWorkloadLogCapture(StartWorkloadLogCaptureRequest) returns (WorkloadLogCapture);
+  rpc StopWorkloadLogCapture(StopWorkloadLogCaptureRequest) returns (WorkloadLogCapture);
+  rpc GetWorkloadLogCapture(GetWorkloadLogCaptureRequest) returns (WorkloadLogCapture);
 }
 
 message AgentMessage {
@@ -142,6 +145,33 @@ message ListSessionsRequest {
 
 message ListSessionsResponse {
   repeated CaptureSession sessions = 1;
+}
+
+message WorkloadLogTarget {
+  string namespace = 1;
+  string kind = 2;
+  string name = 3;
+  repeated string containers = 4;
+  uint32 max_pods = 5;
+}
+
+message StartWorkloadLogCaptureRequest {
+  repeated WorkloadLogTarget targets = 1;
+  uint32 since_seconds = 2;
+}
+
+message StopWorkloadLogCaptureRequest {}
+message GetWorkloadLogCaptureRequest {}
+
+message WorkloadLogCapture {
+  string run_id = 1;
+  string status = 2;
+  int64 started_at_ns = 3;
+  uint64 retained_size = 4;
+  uint32 segment_count = 5;
+  uint32 active_streams = 6;
+  string message = 7;
+  repeated WorkloadLogTarget targets = 8;
 }
 
 message CaptureTarget {

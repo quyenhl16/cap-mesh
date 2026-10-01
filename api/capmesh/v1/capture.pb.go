@@ -1285,6 +1285,306 @@ func (x *ListSessionsResponse) GetSessions() []*CaptureSession {
 	return nil
 }
 
+type WorkloadLogTarget struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Namespace     string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Containers    []string               `protobuf:"bytes,4,rep,name=containers,proto3" json:"containers,omitempty"`
+	MaxPods       uint32                 `protobuf:"varint,5,opt,name=max_pods,json=maxPods,proto3" json:"max_pods,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkloadLogTarget) Reset() {
+	*x = WorkloadLogTarget{}
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkloadLogTarget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkloadLogTarget) ProtoMessage() {}
+
+func (x *WorkloadLogTarget) ProtoReflect() protoreflect.Message {
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkloadLogTarget.ProtoReflect.Descriptor instead.
+func (*WorkloadLogTarget) Descriptor() ([]byte, []int) {
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *WorkloadLogTarget) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *WorkloadLogTarget) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *WorkloadLogTarget) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *WorkloadLogTarget) GetContainers() []string {
+	if x != nil {
+		return x.Containers
+	}
+	return nil
+}
+
+func (x *WorkloadLogTarget) GetMaxPods() uint32 {
+	if x != nil {
+		return x.MaxPods
+	}
+	return 0
+}
+
+type StartWorkloadLogCaptureRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Targets       []*WorkloadLogTarget   `protobuf:"bytes,1,rep,name=targets,proto3" json:"targets,omitempty"`
+	SinceSeconds  uint32                 `protobuf:"varint,2,opt,name=since_seconds,json=sinceSeconds,proto3" json:"since_seconds,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartWorkloadLogCaptureRequest) Reset() {
+	*x = StartWorkloadLogCaptureRequest{}
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartWorkloadLogCaptureRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartWorkloadLogCaptureRequest) ProtoMessage() {}
+
+func (x *StartWorkloadLogCaptureRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartWorkloadLogCaptureRequest.ProtoReflect.Descriptor instead.
+func (*StartWorkloadLogCaptureRequest) Descriptor() ([]byte, []int) {
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *StartWorkloadLogCaptureRequest) GetTargets() []*WorkloadLogTarget {
+	if x != nil {
+		return x.Targets
+	}
+	return nil
+}
+
+func (x *StartWorkloadLogCaptureRequest) GetSinceSeconds() uint32 {
+	if x != nil {
+		return x.SinceSeconds
+	}
+	return 0
+}
+
+type StopWorkloadLogCaptureRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopWorkloadLogCaptureRequest) Reset() {
+	*x = StopWorkloadLogCaptureRequest{}
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopWorkloadLogCaptureRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopWorkloadLogCaptureRequest) ProtoMessage() {}
+
+func (x *StopWorkloadLogCaptureRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopWorkloadLogCaptureRequest.ProtoReflect.Descriptor instead.
+func (*StopWorkloadLogCaptureRequest) Descriptor() ([]byte, []int) {
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{22}
+}
+
+type GetWorkloadLogCaptureRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWorkloadLogCaptureRequest) Reset() {
+	*x = GetWorkloadLogCaptureRequest{}
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWorkloadLogCaptureRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWorkloadLogCaptureRequest) ProtoMessage() {}
+
+func (x *GetWorkloadLogCaptureRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWorkloadLogCaptureRequest.ProtoReflect.Descriptor instead.
+func (*GetWorkloadLogCaptureRequest) Descriptor() ([]byte, []int) {
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{23}
+}
+
+type WorkloadLogCapture struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	StartedAtNs   int64                  `protobuf:"varint,3,opt,name=started_at_ns,json=startedAtNs,proto3" json:"started_at_ns,omitempty"`
+	RetainedSize  uint64                 `protobuf:"varint,4,opt,name=retained_size,json=retainedSize,proto3" json:"retained_size,omitempty"`
+	SegmentCount  uint32                 `protobuf:"varint,5,opt,name=segment_count,json=segmentCount,proto3" json:"segment_count,omitempty"`
+	ActiveStreams uint32                 `protobuf:"varint,6,opt,name=active_streams,json=activeStreams,proto3" json:"active_streams,omitempty"`
+	Message       string                 `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
+	Targets       []*WorkloadLogTarget   `protobuf:"bytes,8,rep,name=targets,proto3" json:"targets,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorkloadLogCapture) Reset() {
+	*x = WorkloadLogCapture{}
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkloadLogCapture) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkloadLogCapture) ProtoMessage() {}
+
+func (x *WorkloadLogCapture) ProtoReflect() protoreflect.Message {
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkloadLogCapture.ProtoReflect.Descriptor instead.
+func (*WorkloadLogCapture) Descriptor() ([]byte, []int) {
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *WorkloadLogCapture) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *WorkloadLogCapture) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *WorkloadLogCapture) GetStartedAtNs() int64 {
+	if x != nil {
+		return x.StartedAtNs
+	}
+	return 0
+}
+
+func (x *WorkloadLogCapture) GetRetainedSize() uint64 {
+	if x != nil {
+		return x.RetainedSize
+	}
+	return 0
+}
+
+func (x *WorkloadLogCapture) GetSegmentCount() uint32 {
+	if x != nil {
+		return x.SegmentCount
+	}
+	return 0
+}
+
+func (x *WorkloadLogCapture) GetActiveStreams() uint32 {
+	if x != nil {
+		return x.ActiveStreams
+	}
+	return 0
+}
+
+func (x *WorkloadLogCapture) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *WorkloadLogCapture) GetTargets() []*WorkloadLogTarget {
+	if x != nil {
+		return x.Targets
+	}
+	return nil
+}
+
 type CaptureTarget struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1296,7 +1596,7 @@ type CaptureTarget struct {
 
 func (x *CaptureTarget) Reset() {
 	*x = CaptureTarget{}
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[20]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1308,7 +1608,7 @@ func (x *CaptureTarget) String() string {
 func (*CaptureTarget) ProtoMessage() {}
 
 func (x *CaptureTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[20]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1321,7 +1621,7 @@ func (x *CaptureTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureTarget.ProtoReflect.Descriptor instead.
 func (*CaptureTarget) Descriptor() ([]byte, []int) {
-	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{20}
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CaptureTarget) GetId() string {
@@ -1355,7 +1655,7 @@ type InterfaceTarget struct {
 
 func (x *InterfaceTarget) Reset() {
 	*x = InterfaceTarget{}
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[21]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1367,7 +1667,7 @@ func (x *InterfaceTarget) String() string {
 func (*InterfaceTarget) ProtoMessage() {}
 
 func (x *InterfaceTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[21]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1380,7 +1680,7 @@ func (x *InterfaceTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InterfaceTarget.ProtoReflect.Descriptor instead.
 func (*InterfaceTarget) Descriptor() ([]byte, []int) {
-	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{21}
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *InterfaceTarget) GetNodes() []string {
@@ -1411,7 +1711,7 @@ type WorkloadTarget struct {
 
 func (x *WorkloadTarget) Reset() {
 	*x = WorkloadTarget{}
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[22]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1423,7 +1723,7 @@ func (x *WorkloadTarget) String() string {
 func (*WorkloadTarget) ProtoMessage() {}
 
 func (x *WorkloadTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[22]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1436,7 +1736,7 @@ func (x *WorkloadTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkloadTarget.ProtoReflect.Descriptor instead.
 func (*WorkloadTarget) Descriptor() ([]byte, []int) {
-	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{22}
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *WorkloadTarget) GetNamespace() string {
@@ -1490,7 +1790,7 @@ type StopSessionRequest struct {
 
 func (x *StopSessionRequest) Reset() {
 	*x = StopSessionRequest{}
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[23]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1502,7 +1802,7 @@ func (x *StopSessionRequest) String() string {
 func (*StopSessionRequest) ProtoMessage() {}
 
 func (x *StopSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[23]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1515,7 +1815,7 @@ func (x *StopSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopSessionRequest.ProtoReflect.Descriptor instead.
 func (*StopSessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{23}
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *StopSessionRequest) GetSessionId() string {
@@ -1534,7 +1834,7 @@ type GetSessionRequest struct {
 
 func (x *GetSessionRequest) Reset() {
 	*x = GetSessionRequest{}
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[24]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1546,7 +1846,7 @@ func (x *GetSessionRequest) String() string {
 func (*GetSessionRequest) ProtoMessage() {}
 
 func (x *GetSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[24]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1559,7 +1859,7 @@ func (x *GetSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionRequest.ProtoReflect.Descriptor instead.
 func (*GetSessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{24}
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GetSessionRequest) GetSessionId() string {
@@ -1578,7 +1878,7 @@ type StreamPacketsRequest struct {
 
 func (x *StreamPacketsRequest) Reset() {
 	*x = StreamPacketsRequest{}
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[25]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1590,7 +1890,7 @@ func (x *StreamPacketsRequest) String() string {
 func (*StreamPacketsRequest) ProtoMessage() {}
 
 func (x *StreamPacketsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[25]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1603,7 +1903,7 @@ func (x *StreamPacketsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamPacketsRequest.ProtoReflect.Descriptor instead.
 func (*StreamPacketsRequest) Descriptor() ([]byte, []int) {
-	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{25}
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *StreamPacketsRequest) GetSessionId() string {
@@ -1632,7 +1932,7 @@ type CaptureSession struct {
 
 func (x *CaptureSession) Reset() {
 	*x = CaptureSession{}
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[26]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1644,7 +1944,7 @@ func (x *CaptureSession) String() string {
 func (*CaptureSession) ProtoMessage() {}
 
 func (x *CaptureSession) ProtoReflect() protoreflect.Message {
-	mi := &file_api_capmesh_v1_capture_proto_msgTypes[26]
+	mi := &file_api_capmesh_v1_capture_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1657,7 +1957,7 @@ func (x *CaptureSession) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureSession.ProtoReflect.Descriptor instead.
 func (*CaptureSession) Descriptor() ([]byte, []int) {
-	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{26}
+	return file_api_capmesh_v1_capture_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CaptureSession) GetId() string {
@@ -1848,7 +2148,29 @@ const file_api_capmesh_v1_capture_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\"N\n" +
 	"\x14ListSessionsResponse\x126\n" +
-	"\bsessions\x18\x01 \x03(\v2\x1a.capmesh.v1.CaptureSessionR\bsessions\"\xac\x01\n" +
+	"\bsessions\x18\x01 \x03(\v2\x1a.capmesh.v1.CaptureSessionR\bsessions\"\x94\x01\n" +
+	"\x11WorkloadLogTarget\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1e\n" +
+	"\n" +
+	"containers\x18\x04 \x03(\tR\n" +
+	"containers\x12\x19\n" +
+	"\bmax_pods\x18\x05 \x01(\rR\amaxPods\"~\n" +
+	"\x1eStartWorkloadLogCaptureRequest\x127\n" +
+	"\atargets\x18\x01 \x03(\v2\x1d.capmesh.v1.WorkloadLogTargetR\atargets\x12#\n" +
+	"\rsince_seconds\x18\x02 \x01(\rR\fsinceSeconds\"\x1f\n" +
+	"\x1dStopWorkloadLogCaptureRequest\"\x1e\n" +
+	"\x1cGetWorkloadLogCaptureRequest\"\xab\x02\n" +
+	"\x12WorkloadLogCapture\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\"\n" +
+	"\rstarted_at_ns\x18\x03 \x01(\x03R\vstartedAtNs\x12#\n" +
+	"\rretained_size\x18\x04 \x01(\x04R\fretainedSize\x12#\n" +
+	"\rsegment_count\x18\x05 \x01(\rR\fsegmentCount\x12%\n" +
+	"\x0eactive_streams\x18\x06 \x01(\rR\ractiveStreams\x12\x18\n" +
+	"\amessage\x18\a \x01(\tR\amessage\x127\n" +
+	"\atargets\x18\b \x03(\v2\x1d.capmesh.v1.WorkloadLogTargetR\atargets\"\xac\x01\n" +
 	"\rCaptureTarget\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12F\n" +
 	"\x10interface_target\x18\x02 \x01(\v2\x1b.capmesh.v1.InterfaceTargetR\x0finterfaceTarget\x12C\n" +
@@ -1886,7 +2208,7 @@ const file_api_capmesh_v1_capture_proto_rawDesc = "" +
 	" \x03(\v2\x19.capmesh.v1.CaptureTargetR\atargets\x12\x12\n" +
 	"\x04mode\x18\v \x01(\tR\x04mode2Q\n" +
 	"\fAgentService\x12A\n" +
-	"\aConnect\x12\x18.capmesh.v1.AgentMessage\x1a\x18.capmesh.v1.AgentCommand(\x010\x012\x87\x06\n" +
+	"\aConnect\x12\x18.capmesh.v1.AgentMessage\x1a\x18.capmesh.v1.AgentCommand(\x010\x012\xb6\b\n" +
 	"\x0eCaptureService\x12M\n" +
 	"\rCreateSession\x12 .capmesh.v1.CreateSessionRequest\x1a\x1a.capmesh.v1.CaptureSession\x12I\n" +
 	"\vStopSession\x12\x1e.capmesh.v1.StopSessionRequest\x1a\x1a.capmesh.v1.CaptureSession\x12G\n" +
@@ -1898,7 +2220,10 @@ const file_api_capmesh_v1_capture_proto_rawDesc = "" +
 	"\x14GetContinuousCapture\x12'.capmesh.v1.GetContinuousCaptureRequest\x1a\x1d.capmesh.v1.ContinuousCapture\x12K\n" +
 	"\n" +
 	"ListAgents\x12\x1d.capmesh.v1.ListAgentsRequest\x1a\x1e.capmesh.v1.ListAgentsResponse\x12Q\n" +
-	"\fListSessions\x12\x1f.capmesh.v1.ListSessionsRequest\x1a .capmesh.v1.ListSessionsResponseB8Z6github.com/quyenhl16/cap-mesh/api/capmesh/v1;capmeshv1b\x06proto3"
+	"\fListSessions\x12\x1f.capmesh.v1.ListSessionsRequest\x1a .capmesh.v1.ListSessionsResponse\x12e\n" +
+	"\x17StartWorkloadLogCapture\x12*.capmesh.v1.StartWorkloadLogCaptureRequest\x1a\x1e.capmesh.v1.WorkloadLogCapture\x12c\n" +
+	"\x16StopWorkloadLogCapture\x12).capmesh.v1.StopWorkloadLogCaptureRequest\x1a\x1e.capmesh.v1.WorkloadLogCapture\x12a\n" +
+	"\x15GetWorkloadLogCapture\x12(.capmesh.v1.GetWorkloadLogCaptureRequest\x1a\x1e.capmesh.v1.WorkloadLogCaptureB8Z6github.com/quyenhl16/cap-mesh/api/capmesh/v1;capmeshv1b\x06proto3"
 
 var (
 	file_api_capmesh_v1_capture_proto_rawDescOnce sync.Once
@@ -1912,37 +2237,42 @@ func file_api_capmesh_v1_capture_proto_rawDescGZIP() []byte {
 	return file_api_capmesh_v1_capture_proto_rawDescData
 }
 
-var file_api_capmesh_v1_capture_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_api_capmesh_v1_capture_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_api_capmesh_v1_capture_proto_goTypes = []any{
-	(*AgentMessage)(nil),                  // 0: capmesh.v1.AgentMessage
-	(*AgentCommand)(nil),                  // 1: capmesh.v1.AgentCommand
-	(*RegisterAgent)(nil),                 // 2: capmesh.v1.RegisterAgent
-	(*Heartbeat)(nil),                     // 3: capmesh.v1.Heartbeat
-	(*CaptureStatus)(nil),                 // 4: capmesh.v1.CaptureStatus
-	(*StartCapture)(nil),                  // 5: capmesh.v1.StartCapture
-	(*StopCapture)(nil),                   // 6: capmesh.v1.StopCapture
-	(*CaptureSource)(nil),                 // 7: capmesh.v1.CaptureSource
-	(*PacketBatch)(nil),                   // 8: capmesh.v1.PacketBatch
-	(*Packet)(nil),                        // 9: capmesh.v1.Packet
-	(*CreateSessionRequest)(nil),          // 10: capmesh.v1.CreateSessionRequest
-	(*StartContinuousCaptureRequest)(nil), // 11: capmesh.v1.StartContinuousCaptureRequest
-	(*StopContinuousCaptureRequest)(nil),  // 12: capmesh.v1.StopContinuousCaptureRequest
-	(*GetContinuousCaptureRequest)(nil),   // 13: capmesh.v1.GetContinuousCaptureRequest
-	(*ContinuousCapture)(nil),             // 14: capmesh.v1.ContinuousCapture
-	(*ListAgentsRequest)(nil),             // 15: capmesh.v1.ListAgentsRequest
-	(*ListAgentsResponse)(nil),            // 16: capmesh.v1.ListAgentsResponse
-	(*AgentInfo)(nil),                     // 17: capmesh.v1.AgentInfo
-	(*ListSessionsRequest)(nil),           // 18: capmesh.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),          // 19: capmesh.v1.ListSessionsResponse
-	(*CaptureTarget)(nil),                 // 20: capmesh.v1.CaptureTarget
-	(*InterfaceTarget)(nil),               // 21: capmesh.v1.InterfaceTarget
-	(*WorkloadTarget)(nil),                // 22: capmesh.v1.WorkloadTarget
-	(*StopSessionRequest)(nil),            // 23: capmesh.v1.StopSessionRequest
-	(*GetSessionRequest)(nil),             // 24: capmesh.v1.GetSessionRequest
-	(*StreamPacketsRequest)(nil),          // 25: capmesh.v1.StreamPacketsRequest
-	(*CaptureSession)(nil),                // 26: capmesh.v1.CaptureSession
-	nil,                                   // 27: capmesh.v1.RegisterAgent.InterfacesEntry
-	nil,                                   // 28: capmesh.v1.AgentInfo.InterfacesEntry
+	(*AgentMessage)(nil),                   // 0: capmesh.v1.AgentMessage
+	(*AgentCommand)(nil),                   // 1: capmesh.v1.AgentCommand
+	(*RegisterAgent)(nil),                  // 2: capmesh.v1.RegisterAgent
+	(*Heartbeat)(nil),                      // 3: capmesh.v1.Heartbeat
+	(*CaptureStatus)(nil),                  // 4: capmesh.v1.CaptureStatus
+	(*StartCapture)(nil),                   // 5: capmesh.v1.StartCapture
+	(*StopCapture)(nil),                    // 6: capmesh.v1.StopCapture
+	(*CaptureSource)(nil),                  // 7: capmesh.v1.CaptureSource
+	(*PacketBatch)(nil),                    // 8: capmesh.v1.PacketBatch
+	(*Packet)(nil),                         // 9: capmesh.v1.Packet
+	(*CreateSessionRequest)(nil),           // 10: capmesh.v1.CreateSessionRequest
+	(*StartContinuousCaptureRequest)(nil),  // 11: capmesh.v1.StartContinuousCaptureRequest
+	(*StopContinuousCaptureRequest)(nil),   // 12: capmesh.v1.StopContinuousCaptureRequest
+	(*GetContinuousCaptureRequest)(nil),    // 13: capmesh.v1.GetContinuousCaptureRequest
+	(*ContinuousCapture)(nil),              // 14: capmesh.v1.ContinuousCapture
+	(*ListAgentsRequest)(nil),              // 15: capmesh.v1.ListAgentsRequest
+	(*ListAgentsResponse)(nil),             // 16: capmesh.v1.ListAgentsResponse
+	(*AgentInfo)(nil),                      // 17: capmesh.v1.AgentInfo
+	(*ListSessionsRequest)(nil),            // 18: capmesh.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),           // 19: capmesh.v1.ListSessionsResponse
+	(*WorkloadLogTarget)(nil),              // 20: capmesh.v1.WorkloadLogTarget
+	(*StartWorkloadLogCaptureRequest)(nil), // 21: capmesh.v1.StartWorkloadLogCaptureRequest
+	(*StopWorkloadLogCaptureRequest)(nil),  // 22: capmesh.v1.StopWorkloadLogCaptureRequest
+	(*GetWorkloadLogCaptureRequest)(nil),   // 23: capmesh.v1.GetWorkloadLogCaptureRequest
+	(*WorkloadLogCapture)(nil),             // 24: capmesh.v1.WorkloadLogCapture
+	(*CaptureTarget)(nil),                  // 25: capmesh.v1.CaptureTarget
+	(*InterfaceTarget)(nil),                // 26: capmesh.v1.InterfaceTarget
+	(*WorkloadTarget)(nil),                 // 27: capmesh.v1.WorkloadTarget
+	(*StopSessionRequest)(nil),             // 28: capmesh.v1.StopSessionRequest
+	(*GetSessionRequest)(nil),              // 29: capmesh.v1.GetSessionRequest
+	(*StreamPacketsRequest)(nil),           // 30: capmesh.v1.StreamPacketsRequest
+	(*CaptureSession)(nil),                 // 31: capmesh.v1.CaptureSession
+	nil,                                    // 32: capmesh.v1.RegisterAgent.InterfacesEntry
+	nil,                                    // 33: capmesh.v1.AgentInfo.InterfacesEntry
 }
 var file_api_capmesh_v1_capture_proto_depIdxs = []int32{
 	2,  // 0: capmesh.v1.AgentMessage.register:type_name -> capmesh.v1.RegisterAgent
@@ -1951,43 +2281,51 @@ var file_api_capmesh_v1_capture_proto_depIdxs = []int32{
 	8,  // 3: capmesh.v1.AgentMessage.batch:type_name -> capmesh.v1.PacketBatch
 	5,  // 4: capmesh.v1.AgentCommand.start:type_name -> capmesh.v1.StartCapture
 	6,  // 5: capmesh.v1.AgentCommand.stop:type_name -> capmesh.v1.StopCapture
-	27, // 6: capmesh.v1.RegisterAgent.interfaces:type_name -> capmesh.v1.RegisterAgent.InterfacesEntry
+	32, // 6: capmesh.v1.RegisterAgent.interfaces:type_name -> capmesh.v1.RegisterAgent.InterfacesEntry
 	7,  // 7: capmesh.v1.StartCapture.source:type_name -> capmesh.v1.CaptureSource
 	9,  // 8: capmesh.v1.PacketBatch.packets:type_name -> capmesh.v1.Packet
 	7,  // 9: capmesh.v1.PacketBatch.source:type_name -> capmesh.v1.CaptureSource
-	20, // 10: capmesh.v1.CreateSessionRequest.targets:type_name -> capmesh.v1.CaptureTarget
-	20, // 11: capmesh.v1.StartContinuousCaptureRequest.targets:type_name -> capmesh.v1.CaptureTarget
+	25, // 10: capmesh.v1.CreateSessionRequest.targets:type_name -> capmesh.v1.CaptureTarget
+	25, // 11: capmesh.v1.StartContinuousCaptureRequest.targets:type_name -> capmesh.v1.CaptureTarget
 	17, // 12: capmesh.v1.ListAgentsResponse.agents:type_name -> capmesh.v1.AgentInfo
-	28, // 13: capmesh.v1.AgentInfo.interfaces:type_name -> capmesh.v1.AgentInfo.InterfacesEntry
-	26, // 14: capmesh.v1.ListSessionsResponse.sessions:type_name -> capmesh.v1.CaptureSession
-	21, // 15: capmesh.v1.CaptureTarget.interface_target:type_name -> capmesh.v1.InterfaceTarget
-	22, // 16: capmesh.v1.CaptureTarget.workload_target:type_name -> capmesh.v1.WorkloadTarget
-	20, // 17: capmesh.v1.CaptureSession.targets:type_name -> capmesh.v1.CaptureTarget
-	0,  // 18: capmesh.v1.AgentService.Connect:input_type -> capmesh.v1.AgentMessage
-	10, // 19: capmesh.v1.CaptureService.CreateSession:input_type -> capmesh.v1.CreateSessionRequest
-	23, // 20: capmesh.v1.CaptureService.StopSession:input_type -> capmesh.v1.StopSessionRequest
-	24, // 21: capmesh.v1.CaptureService.GetSession:input_type -> capmesh.v1.GetSessionRequest
-	25, // 22: capmesh.v1.CaptureService.StreamPackets:input_type -> capmesh.v1.StreamPacketsRequest
-	11, // 23: capmesh.v1.CaptureService.StartContinuousCapture:input_type -> capmesh.v1.StartContinuousCaptureRequest
-	12, // 24: capmesh.v1.CaptureService.StopContinuousCapture:input_type -> capmesh.v1.StopContinuousCaptureRequest
-	13, // 25: capmesh.v1.CaptureService.GetContinuousCapture:input_type -> capmesh.v1.GetContinuousCaptureRequest
-	15, // 26: capmesh.v1.CaptureService.ListAgents:input_type -> capmesh.v1.ListAgentsRequest
-	18, // 27: capmesh.v1.CaptureService.ListSessions:input_type -> capmesh.v1.ListSessionsRequest
-	1,  // 28: capmesh.v1.AgentService.Connect:output_type -> capmesh.v1.AgentCommand
-	26, // 29: capmesh.v1.CaptureService.CreateSession:output_type -> capmesh.v1.CaptureSession
-	26, // 30: capmesh.v1.CaptureService.StopSession:output_type -> capmesh.v1.CaptureSession
-	26, // 31: capmesh.v1.CaptureService.GetSession:output_type -> capmesh.v1.CaptureSession
-	8,  // 32: capmesh.v1.CaptureService.StreamPackets:output_type -> capmesh.v1.PacketBatch
-	14, // 33: capmesh.v1.CaptureService.StartContinuousCapture:output_type -> capmesh.v1.ContinuousCapture
-	14, // 34: capmesh.v1.CaptureService.StopContinuousCapture:output_type -> capmesh.v1.ContinuousCapture
-	14, // 35: capmesh.v1.CaptureService.GetContinuousCapture:output_type -> capmesh.v1.ContinuousCapture
-	16, // 36: capmesh.v1.CaptureService.ListAgents:output_type -> capmesh.v1.ListAgentsResponse
-	19, // 37: capmesh.v1.CaptureService.ListSessions:output_type -> capmesh.v1.ListSessionsResponse
-	28, // [28:38] is the sub-list for method output_type
-	18, // [18:28] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	33, // 13: capmesh.v1.AgentInfo.interfaces:type_name -> capmesh.v1.AgentInfo.InterfacesEntry
+	31, // 14: capmesh.v1.ListSessionsResponse.sessions:type_name -> capmesh.v1.CaptureSession
+	20, // 15: capmesh.v1.StartWorkloadLogCaptureRequest.targets:type_name -> capmesh.v1.WorkloadLogTarget
+	20, // 16: capmesh.v1.WorkloadLogCapture.targets:type_name -> capmesh.v1.WorkloadLogTarget
+	26, // 17: capmesh.v1.CaptureTarget.interface_target:type_name -> capmesh.v1.InterfaceTarget
+	27, // 18: capmesh.v1.CaptureTarget.workload_target:type_name -> capmesh.v1.WorkloadTarget
+	25, // 19: capmesh.v1.CaptureSession.targets:type_name -> capmesh.v1.CaptureTarget
+	0,  // 20: capmesh.v1.AgentService.Connect:input_type -> capmesh.v1.AgentMessage
+	10, // 21: capmesh.v1.CaptureService.CreateSession:input_type -> capmesh.v1.CreateSessionRequest
+	28, // 22: capmesh.v1.CaptureService.StopSession:input_type -> capmesh.v1.StopSessionRequest
+	29, // 23: capmesh.v1.CaptureService.GetSession:input_type -> capmesh.v1.GetSessionRequest
+	30, // 24: capmesh.v1.CaptureService.StreamPackets:input_type -> capmesh.v1.StreamPacketsRequest
+	11, // 25: capmesh.v1.CaptureService.StartContinuousCapture:input_type -> capmesh.v1.StartContinuousCaptureRequest
+	12, // 26: capmesh.v1.CaptureService.StopContinuousCapture:input_type -> capmesh.v1.StopContinuousCaptureRequest
+	13, // 27: capmesh.v1.CaptureService.GetContinuousCapture:input_type -> capmesh.v1.GetContinuousCaptureRequest
+	15, // 28: capmesh.v1.CaptureService.ListAgents:input_type -> capmesh.v1.ListAgentsRequest
+	18, // 29: capmesh.v1.CaptureService.ListSessions:input_type -> capmesh.v1.ListSessionsRequest
+	21, // 30: capmesh.v1.CaptureService.StartWorkloadLogCapture:input_type -> capmesh.v1.StartWorkloadLogCaptureRequest
+	22, // 31: capmesh.v1.CaptureService.StopWorkloadLogCapture:input_type -> capmesh.v1.StopWorkloadLogCaptureRequest
+	23, // 32: capmesh.v1.CaptureService.GetWorkloadLogCapture:input_type -> capmesh.v1.GetWorkloadLogCaptureRequest
+	1,  // 33: capmesh.v1.AgentService.Connect:output_type -> capmesh.v1.AgentCommand
+	31, // 34: capmesh.v1.CaptureService.CreateSession:output_type -> capmesh.v1.CaptureSession
+	31, // 35: capmesh.v1.CaptureService.StopSession:output_type -> capmesh.v1.CaptureSession
+	31, // 36: capmesh.v1.CaptureService.GetSession:output_type -> capmesh.v1.CaptureSession
+	8,  // 37: capmesh.v1.CaptureService.StreamPackets:output_type -> capmesh.v1.PacketBatch
+	14, // 38: capmesh.v1.CaptureService.StartContinuousCapture:output_type -> capmesh.v1.ContinuousCapture
+	14, // 39: capmesh.v1.CaptureService.StopContinuousCapture:output_type -> capmesh.v1.ContinuousCapture
+	14, // 40: capmesh.v1.CaptureService.GetContinuousCapture:output_type -> capmesh.v1.ContinuousCapture
+	16, // 41: capmesh.v1.CaptureService.ListAgents:output_type -> capmesh.v1.ListAgentsResponse
+	19, // 42: capmesh.v1.CaptureService.ListSessions:output_type -> capmesh.v1.ListSessionsResponse
+	24, // 43: capmesh.v1.CaptureService.StartWorkloadLogCapture:output_type -> capmesh.v1.WorkloadLogCapture
+	24, // 44: capmesh.v1.CaptureService.StopWorkloadLogCapture:output_type -> capmesh.v1.WorkloadLogCapture
+	24, // 45: capmesh.v1.CaptureService.GetWorkloadLogCapture:output_type -> capmesh.v1.WorkloadLogCapture
+	33, // [33:46] is the sub-list for method output_type
+	20, // [20:33] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_api_capmesh_v1_capture_proto_init() }
@@ -2001,7 +2339,7 @@ func file_api_capmesh_v1_capture_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_capmesh_v1_capture_proto_rawDesc), len(file_api_capmesh_v1_capture_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

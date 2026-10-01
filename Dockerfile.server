@@ -11,5 +11,6 @@ RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/capmes
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/capmesh-server /usr/local/bin/capmesh-server
+COPY VERSION /app/VERSION
 EXPOSE 18443 19090
 ENTRYPOINT ["/usr/local/bin/capmesh-server"]

@@ -20,10 +20,12 @@ import (
 	"github.com/quyenhl16/cap-mesh/internal/adapter/envconfig"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcserver"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/kubernetes"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/logrecording"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/memory"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/recording"
 	appcontinuous "github.com/quyenhl16/cap-mesh/internal/application/continuous"
+	applogcapture "github.com/quyenhl16/cap-mesh/internal/application/logcapture"
 	appsession "github.com/quyenhl16/cap-mesh/internal/application/session"
 	appstream "github.com/quyenhl16/cap-mesh/internal/application/stream"
 	"github.com/quyenhl16/cap-mesh/internal/core/ports"
@@ -111,10 +113,21 @@ func main() {
 		logger.Error("--workload-reconcile-interval must be positive")
 		os.Exit(2)
 	}
-	sessions.SetWorkloadResolver(kubernetes.NewWorkloadResolver(), *workloadReconcileInterval)
+	workloadResolver := kubernetes.NewWorkloadResolver()
+	sessions.SetWorkloadResolver(workloadResolver, *workloadReconcileInterval)
 	continuousCapture := appcontinuous.NewService(sessions, recorderManager, recorderManager != nil)
 	if recorderManager != nil {
 		recorderManager.OnComplete(continuousCapture.RecordingCompleted)
+	}
+	var workloadLogCapture *applogcapture.Service
+	if *recordDirectory != "" {
+		logMetrics := logrecording.NewMetrics(registry)
+		logFactory, factoryErr := logrecording.NewFactory(logrecording.Config{Directory: *recordDirectory, SegmentSize: segmentSize, MaxRetainedSize: maxSessionSize, SyncInterval: 10 * time.Second}, logger, logMetrics)
+		if factoryErr != nil {
+			logger.Error("initialize workload log recording failed", "error", factoryErr)
+			os.Exit(1)
+		}
+		workloadLogCapture = applogcapture.NewService(workloadResolver, logFactory, applogcapture.Config{ReconcileInterval: *workloadReconcileInterval, QueueSize: *recordQueueSize, SegmentSize: segmentSize, MaxRetainedSize: maxSessionSize}, logger, logMetrics)
 	}
 	agents.OnDisconnect(func(node string) {
 		logger.Warn("marking sessions after agent disconnect", "node", node)
@@ -147,6 +160,7 @@ func main() {
 	captureServer := grpcserver.NewCaptureServer(sessions, packetService, logger)
 	captureServer.SetContinuousCapture(continuousCapture)
 	captureServer.SetAgentRegistry(agents)
+	captureServer.SetWorkloadLogCapture(workloadLogCapture)
 	capmeshv1.RegisterCaptureServiceServer(grpcServer, captureServer)
 
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}
@@ -180,6 +194,13 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = metricsServer.Shutdown(shutdownCtx)
+	if workloadLogCapture != nil {
+		logCtx, logCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer logCancel()
+		if err := workloadLogCapture.Shutdown(logCtx); err != nil {
+			logger.Error("workload log capture shutdown failed", "error", err)
+		}
+	}
 	if recorderManager != nil {
 		recordingCtx, recordingCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer recordingCancel()

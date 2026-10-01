@@ -36,6 +36,9 @@ func main() {
 	continuousStart := flag.Bool("continuous-start", false, "start the singleton server-owned continuous capture and exit")
 	continuousStop := flag.Bool("continuous-stop", false, "stop the singleton continuous capture and exit")
 	continuousStatus := flag.Bool("continuous-status", false, "show singleton continuous capture status and exit")
+	logStart := flag.Bool("log-start", false, "start the singleton server-owned workload log capture and exit")
+	logStop := flag.Bool("log-stop", false, "stop the singleton workload log capture and exit")
+	logStatus := flag.Bool("log-status", false, "show singleton workload log capture status and exit")
 	listAgents := flag.Bool("list-agents", false, "list connected agents and their interface mappings")
 	listSessions := flag.Bool("list-sessions", false, "list running normal capture sessions")
 	nodes := flag.String("nodes", "", "comma-separated node names for a new session")
@@ -47,6 +50,11 @@ func main() {
 	direction := flag.String("direction", "egress", "workload traffic direction: egress, ingress, or both")
 	follow := flag.Bool("follow", true, "follow workload scale, restart, and reschedule changes")
 	maxPods := flag.Uint("max-pods", 100, "maximum pods allowed for a workload target")
+	var logWorkloads stringList
+	flag.Var(&logWorkloads, "log-workload", "workload to capture logs from as namespace/statefulset|deployment/name; repeat for multiple workloads")
+	var logContainers stringList
+	flag.Var(&logContainers, "log-container", "container name to capture for every log workload; repeat for multiple containers; empty captures all regular containers")
+	logSince := flag.Duration("log-since", 0, "include workload logs this far before start; 0 captures only new logs")
 	filter := flag.String("filter", "", "BPF capture filter")
 	snaplen := flag.Uint("snaplen", 4096, "packet snapshot length")
 	ttl := flag.Duration("ttl", 5*time.Minute, "capture session lifetime")
@@ -58,9 +66,9 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	controlModes := boolCount(*continuousStart, *continuousStop, *continuousStatus, *listAgents, *listSessions)
+	controlModes := boolCount(*continuousStart, *continuousStop, *continuousStatus, *logStart, *logStop, *logStatus, *listAgents, *listSessions)
 	if controlModes > 1 || (controlModes > 0 && (*create || *sessionID != "")) {
-		logger.Error("--continuous-start, --continuous-stop, --continuous-status, --list-agents, --list-sessions, --create, and --session are mutually exclusive")
+		logger.Error("capture control, log control, list, --create, and --session modes are mutually exclusive")
 		os.Exit(2)
 	}
 	if !*create && *sessionID == "" && controlModes == 0 {
@@ -77,6 +85,42 @@ func main() {
 	defer connection.Close()
 	client := capmeshv1.NewCaptureServiceClient(connection)
 	authContext := grpcclient.AuthContext(ctx, *token)
+	if *logStop {
+		capture, err := client.StopWorkloadLogCapture(authContext, &capmeshv1.StopWorkloadLogCaptureRequest{})
+		if err != nil {
+			logger.Error("stop workload log capture failed", "error", err)
+			os.Exit(1)
+		}
+		printWorkloadLogCapture(capture)
+		return
+	}
+	if *logStatus {
+		capture, err := client.GetWorkloadLogCapture(authContext, &capmeshv1.GetWorkloadLogCaptureRequest{})
+		if err != nil {
+			logger.Error("get workload log capture failed", "error", err)
+			os.Exit(1)
+		}
+		printWorkloadLogCapture(capture)
+		return
+	}
+	if *logStart {
+		if *logSince < 0 {
+			logger.Error("--log-since must not be negative")
+			os.Exit(2)
+		}
+		targets, err := buildLogTargets(logWorkloads, logContainers, *maxPods)
+		if err != nil {
+			logger.Error("invalid workload log target", "error", err)
+			os.Exit(2)
+		}
+		capture, err := client.StartWorkloadLogCapture(authContext, &capmeshv1.StartWorkloadLogCaptureRequest{Targets: targets, SinceSeconds: uint32(logSince.Seconds())})
+		if err != nil {
+			logger.Error("start workload log capture failed", "error", err)
+			os.Exit(1)
+		}
+		printWorkloadLogCapture(capture)
+		return
+	}
 	if *listAgents {
 		response, err := client.ListAgents(authContext, &capmeshv1.ListAgentsRequest{})
 		if err != nil {
@@ -252,6 +296,46 @@ func boolCount(values ...bool) int {
 
 func printContinuousCapture(capture *capmeshv1.ContinuousCapture) {
 	fmt.Printf("session_id=%s status=%s retained_size=%d segments=%d message=%q\n", capture.GetSessionId(), capture.GetStatus(), capture.GetRetainedSize(), capture.GetSegmentCount(), capture.GetMessage())
+}
+
+func printWorkloadLogCapture(capture *capmeshv1.WorkloadLogCapture) {
+	targets := make([]string, 0, len(capture.GetTargets()))
+	for _, target := range capture.GetTargets() {
+		value := target.GetNamespace() + "/" + target.GetKind() + "/" + target.GetName()
+		if len(target.GetContainers()) > 0 {
+			value += "[" + strings.Join(target.GetContainers(), ",") + "]"
+		}
+		targets = append(targets, value)
+	}
+	fmt.Printf("run_id=%s status=%s retained_size=%d segments=%d active_streams=%d started_at=%s targets=%q message=%q\n", capture.GetRunId(), capture.GetStatus(), capture.GetRetainedSize(), capture.GetSegmentCount(), capture.GetActiveStreams(), formatTimestamp(capture.GetStartedAtNs()), strings.Join(targets, ";"), capture.GetMessage())
+}
+
+func buildLogTargets(values, containers []string, maxPods uint) ([]*capmeshv1.WorkloadLogTarget, error) {
+	if len(values) == 0 {
+		return nil, errors.New("at least one --log-workload is required")
+	}
+	if maxPods == 0 {
+		return nil, errors.New("--max-pods must be positive")
+	}
+	result := make([]*capmeshv1.WorkloadLogTarget, 0, len(values))
+	seen := make(map[string]struct{})
+	for _, value := range values {
+		parts := strings.Split(value, "/")
+		if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[2]) == "" {
+			return nil, fmt.Errorf("%q must use namespace/statefulset|deployment/name", value)
+		}
+		kind := strings.ToLower(strings.TrimSpace(parts[1]))
+		if kind != "statefulset" && kind != "deployment" {
+			return nil, fmt.Errorf("unsupported workload kind %q", parts[1])
+		}
+		key := strings.TrimSpace(parts[0]) + "/" + kind + "/" + strings.TrimSpace(parts[2])
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("duplicate workload %q", key)
+		}
+		seen[key] = struct{}{}
+		result = append(result, &capmeshv1.WorkloadLogTarget{Namespace: strings.TrimSpace(parts[0]), Kind: kind, Name: strings.TrimSpace(parts[2]), Containers: append([]string(nil), containers...), MaxPods: uint32(maxPods)})
+	}
+	return result, nil
 }
 
 func printAgents(response *capmeshv1.ListAgentsResponse) {

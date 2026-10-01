@@ -1,0 +1,8 @@
+remote: https://github.com/quyenhl16/cap-mesh.git
+branch: master
+latest_commit:
+  hash: 9bb4eaadac26b54671f04f3c991e4207c1abcbab
+  short_hash: 9bb4eaa
+  date: 2026-10-01T20:02:28+07:00
+  subject: "chore: tune capture defaults"
+latest_tag: 0.0.10

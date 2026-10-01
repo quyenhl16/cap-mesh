@@ -20,11 +20,13 @@ import (
 )
 
 type WorkloadResolver struct {
-	once    sync.Once
-	client  *http.Client
-	baseURL string
-	token   string
-	err     error
+	once         sync.Once
+	client       *http.Client
+	streamClient *http.Client
+	baseURL      string
+	token        string
+	tokenPath    string
+	err          error
 }
 
 type apiResponseError struct {
@@ -72,10 +74,17 @@ type podList struct {
 	Items []struct {
 		Metadata objectMeta `json:"metadata"`
 		Spec     struct {
-			NodeName string `json:"nodeName"`
+			NodeName   string `json:"nodeName"`
+			Containers []struct {
+				Name string `json:"name"`
+			} `json:"containers"`
 		} `json:"spec"`
 		Status struct {
-			PodIP string `json:"podIP"`
+			PodIP             string `json:"podIP"`
+			ContainerStatuses []struct {
+				Name         string `json:"name"`
+				RestartCount int32  `json:"restartCount"`
+			} `json:"containerStatuses"`
 		} `json:"status"`
 	} `json:"items"`
 }
@@ -101,6 +110,60 @@ func (r *WorkloadResolver) Resolve(ctx context.Context, target domain.WorkloadTa
 	if err := r.initialize(); err != nil {
 		return nil, err
 	}
+	logTarget := domain.WorkloadLogTarget{Namespace: target.Namespace, Kind: target.Kind, Name: target.Name, MaxPods: target.MaxPods}
+	pods, err := r.resolveOwnedPods(ctx, logTarget)
+	if err != nil {
+		return nil, err
+	}
+	namespace := url.PathEscape(target.Namespace)
+	endpoints, err := r.listWorkloadEndpoints(ctx, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("list Calico workload endpoints: %w", err)
+	}
+	var sources []domain.CaptureSource
+	for _, pod := range pods {
+		if pod.nodeName == "" || pod.podIP == "" {
+			continue
+		}
+		iface := endpointInterface(endpoints, pod.Name, pod.nodeName, pod.podIP)
+		sources = append(sources, domain.CaptureSource{
+			ID:            "pod:" + targetID + ":" + pod.UID,
+			TargetID:      targetID,
+			TargetType:    "workload",
+			NodeName:      pod.nodeName,
+			InterfaceName: iface,
+			Namespace:     target.Namespace,
+			PodName:       pod.Name,
+			PodUID:        pod.UID,
+			PodIP:         pod.podIP,
+		})
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
+	return sources, nil
+}
+
+type ownedPod struct {
+	domain.WorkloadPod
+	nodeName string
+	podIP    string
+}
+
+func (r *WorkloadResolver) ResolvePods(ctx context.Context, target domain.WorkloadLogTarget) ([]domain.WorkloadPod, error) {
+	if err := r.initialize(); err != nil {
+		return nil, err
+	}
+	pods, err := r.resolveOwnedPods(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.WorkloadPod, 0, len(pods))
+	for _, pod := range pods {
+		result = append(result, pod.WorkloadPod)
+	}
+	return result, nil
+}
+
+func (r *WorkloadResolver) resolveOwnedPods(ctx context.Context, target domain.WorkloadLogTarget) ([]ownedPod, error) {
 	namespace := url.PathEscape(target.Namespace)
 	resource := "deployments"
 	if target.Kind == "statefulset" {
@@ -136,30 +199,23 @@ func (r *WorkloadResolver) Resolve(ctx context.Context, target domain.WorkloadTa
 		}
 	}
 
-	endpoints, err := r.listWorkloadEndpoints(ctx, namespace)
-	if err != nil {
-		return nil, fmt.Errorf("list Calico workload endpoints: %w", err)
-	}
-	var sources []domain.CaptureSource
+	var result []ownedPod
 	for _, pod := range pods.Items {
-		if pod.Metadata.DeletionTimestamp != "" || pod.Spec.NodeName == "" || pod.Status.PodIP == "" || !ownedByAny(pod.Metadata, ownerKind, owners) {
+		if pod.Metadata.DeletionTimestamp != "" || !ownedByAny(pod.Metadata, ownerKind, owners) {
 			continue
 		}
-		iface := endpointInterface(endpoints, pod.Metadata.Name, pod.Spec.NodeName, pod.Status.PodIP)
-		sources = append(sources, domain.CaptureSource{
-			ID:            "pod:" + targetID + ":" + pod.Metadata.UID,
-			TargetID:      targetID,
-			TargetType:    "workload",
-			NodeName:      pod.Spec.NodeName,
-			InterfaceName: iface,
-			Namespace:     target.Namespace,
-			PodName:       pod.Metadata.Name,
-			PodUID:        pod.Metadata.UID,
-			PodIP:         pod.Status.PodIP,
-		})
+		containers := make([]string, 0, len(pod.Spec.Containers))
+		for _, container := range pod.Spec.Containers {
+			containers = append(containers, container.Name)
+		}
+		restarts := make(map[string]int32, len(pod.Status.ContainerStatuses))
+		for _, status := range pod.Status.ContainerStatuses {
+			restarts[status.Name] = status.RestartCount
+		}
+		result = append(result, ownedPod{WorkloadPod: domain.WorkloadPod{Target: target, Name: pod.Metadata.Name, UID: pod.Metadata.UID, Containers: containers, RestartCount: restarts}, nodeName: pod.Spec.NodeName, podIP: pod.Status.PodIP})
 	}
-	sort.Slice(sources, func(i, j int) bool { return sources[i].ID < sources[j].ID })
-	return sources, nil
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
 }
 
 func (r *WorkloadResolver) listWorkloadEndpoints(ctx context.Context, namespace string) (workloadEndpointList, error) {
@@ -198,7 +254,8 @@ func (r *WorkloadResolver) initialize() error {
 			r.err = fmt.Errorf("KUBERNETES_SERVICE_HOST is not set")
 			return
 		}
-		token, err := os.ReadFile(filepath.Join(serviceAccountPath, "token"))
+		tokenPath := filepath.Join(serviceAccountPath, "token")
+		token, err := os.ReadFile(tokenPath)
 		if err != nil {
 			r.err = fmt.Errorf("read service account token: %w", err)
 			return
@@ -213,9 +270,12 @@ func (r *WorkloadResolver) initialize() error {
 			r.err = fmt.Errorf("Kubernetes CA contains no certificates")
 			return
 		}
-		r.client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}}, Timeout: 15 * time.Second}
+		transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}}
+		r.client = &http.Client{Transport: transport, Timeout: 15 * time.Second}
+		r.streamClient = &http.Client{Transport: transport.Clone()}
 		r.baseURL = "https://" + host + ":" + port
 		r.token = strings.TrimSpace(string(token))
+		r.tokenPath = tokenPath
 	})
 	return r.err
 }
@@ -229,7 +289,11 @@ func (r *WorkloadResolver) get(ctx context.Context, path string, query url.Value
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+r.token)
+	token, err := r.authorizationToken()
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
 	response, err := r.client.Do(request)
 	if err != nil {
 		return err
@@ -242,6 +306,17 @@ func (r *WorkloadResolver) get(ctx context.Context, path string, query url.Value
 		return fmt.Errorf("decode Kubernetes API response: %w", err)
 	}
 	return nil
+}
+
+func (r *WorkloadResolver) authorizationToken() (string, error) {
+	if r.tokenPath == "" {
+		return r.token, nil
+	}
+	value, err := os.ReadFile(r.tokenPath)
+	if err != nil {
+		return "", fmt.Errorf("read service account token: %w", err)
+	}
+	return strings.TrimSpace(string(value)), nil
 }
 
 func selectorString(selector labelSelector) (string, error) {

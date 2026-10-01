@@ -202,6 +202,45 @@ API `ListSessions` hỗ trợ lọc theo `status` và `mode`; CLI `--list-sessio
 mặc định yêu cầu `RUNNING/NORMAL`. Danh sách nằm trong memory và sẽ mất khi
 server restart. Viewer, admin và shared token đều có quyền xem.
 
+## Continuous workload log capture
+
+Server có thể chạy một singleton background job để ghi nguyên văn log của tất
+cả Pod thuộc một hoặc nhiều StatefulSet/Deployment. Client chỉ gọi start rồi có
+thể thoát; job chỉ dừng khi gọi `--log-stop` hoặc server shutdown. Singleton log
+độc lập với singleton packet capture nên hai loại có thể chạy đồng thời.
+
+```bash
+export CAPMESH_TOKEN='replace-me'
+
+./bin/capmesh-client \
+  --server 10.106.142.184:18443 \
+  --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server \
+  --token "$CAPMESH_TOKEN" \
+  --log-start \
+  --log-workload pramf01/statefulset/mm \
+  --log-workload pramf01/deployment/api \
+  --log-container app \
+  --log-since 5m \
+  --max-pods 100
+
+./bin/capmesh-client --server 10.106.142.184:18443 --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server --token "$CAPMESH_TOKEN" --log-status
+
+./bin/capmesh-client --server 10.106.142.184:18443 --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server --token "$CAPMESH_TOKEN" --log-stop
+```
+
+Bỏ `--log-container` để lấy mọi application container. `--log-since 0` chỉ lấy
+log mới từ thời điểm start. File nằm dưới
+`<record-dir>/logs/continuous/<run-id>/`; mỗi Pod UID, container và restart count
+có thư mục riêng. Nội dung `.log` giống `kubectl logs ... > file.log`, không bị
+đóng gói JSON hoặc thêm prefix. Rotate dùng `CAPMESH_RECORD_SEGMENT_SIZE`, còn
+quota rolling toàn bộ log dùng `CAPMESH_RECORD_MAX_SESSION_SIZE`.
+
+Chi tiết API, cấu trúc file, retention và hành vi reconnect xem tại
+[`docs/workload-log-capture.md`](docs/workload-log-capture.md).
+
 `--token` là token dùng chung tương thích cấu hình đơn giản. Khi cần tách quyền, server hỗ trợ `--agent-token`, `--viewer-token`, `--admin-token` (hoặc các biến `CAPMESH_AGENT_TOKEN`, `CAPMESH_VIEWER_TOKEN`, `CAPMESH_ADMIN_TOKEN`). Agent chỉ được mở stream agent; viewer chỉ được xem metadata/packet; admin được tạo, xem và dừng session.
 
 ## Triển khai Kubernetes
