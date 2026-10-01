@@ -8,6 +8,7 @@ import (
 
 	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcapi"
+	appcontinuous "github.com/quyenhl16/cap-mesh/internal/application/continuous"
 	appsession "github.com/quyenhl16/cap-mesh/internal/application/session"
 	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 	"google.golang.org/grpc/codes"
@@ -17,9 +18,14 @@ import (
 
 type CaptureServer struct {
 	capmeshv1.UnimplementedCaptureServiceServer
-	sessions *appsession.Service
-	packets  ports.PacketPublisher
-	logger   *slog.Logger
+	sessions   *appsession.Service
+	packets    ports.PacketPublisher
+	logger     *slog.Logger
+	continuous *appcontinuous.Service
+}
+
+func (s *CaptureServer) SetContinuousCapture(service *appcontinuous.Service) {
+	s.continuous = service
 }
 
 func NewCaptureServer(sessions *appsession.Service, packets ports.PacketPublisher, logger *slog.Logger) *CaptureServer {
@@ -70,6 +76,45 @@ func (s *CaptureServer) StreamPackets(request *capmeshv1.StreamPacketsRequest, s
 		}
 	}
 	return nil
+}
+
+func (s *CaptureServer) StartContinuousCapture(ctx context.Context, request *capmeshv1.StartContinuousCaptureRequest) (*capmeshv1.ContinuousCapture, error) {
+	if s.continuous == nil {
+		return nil, status.Error(codes.Unavailable, "continuous capture is not configured")
+	}
+	capture, err := s.continuous.Start(ctx, appcontinuous.StartInput{Targets: grpcapi.CaptureTargetsFromProto(request.GetTargets()), Filter: request.GetFilter(), Snaplen: request.GetSnaplen(), ReorderWindow: time.Duration(request.GetReorderWindowMs()) * time.Millisecond})
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	s.logger.Info("continuous capture started", "session_id", capture.SessionID)
+	return continuousCaptureToProto(capture), nil
+}
+
+func (s *CaptureServer) StopContinuousCapture(ctx context.Context, _ *capmeshv1.StopContinuousCaptureRequest) (*capmeshv1.ContinuousCapture, error) {
+	if s.continuous == nil {
+		return nil, status.Error(codes.Unavailable, "continuous capture is not configured")
+	}
+	capture, err := s.continuous.Stop(ctx)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	s.logger.Info("continuous capture stopped")
+	return continuousCaptureToProto(capture), nil
+}
+
+func (s *CaptureServer) GetContinuousCapture(ctx context.Context, _ *capmeshv1.GetContinuousCaptureRequest) (*capmeshv1.ContinuousCapture, error) {
+	if s.continuous == nil {
+		return nil, status.Error(codes.Unavailable, "continuous capture is not configured")
+	}
+	return continuousCaptureToProto(s.continuous.Get(ctx)), nil
+}
+
+func continuousCaptureToProto(capture appcontinuous.Capture) *capmeshv1.ContinuousCapture {
+	var startedAt int64
+	if !capture.StartedAt.IsZero() {
+		startedAt = capture.StartedAt.UnixNano()
+	}
+	return &capmeshv1.ContinuousCapture{SessionId: capture.SessionID, Status: string(capture.Status), StartedAtNs: startedAt, RetainedSize: uint64(max(capture.RetainedSize, 0)), SegmentCount: uint32(capture.SegmentCount), Message: capture.Message}
 }
 
 func rpcError(err error) error {

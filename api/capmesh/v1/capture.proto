@@ -13,6 +13,9 @@ service CaptureService {
   rpc StopSession(StopSessionRequest) returns (CaptureSession);
   rpc GetSession(GetSessionRequest) returns (CaptureSession);
   rpc StreamPackets(StreamPacketsRequest) returns (stream PacketBatch);
+  rpc StartContinuousCapture(StartContinuousCaptureRequest) returns (ContinuousCapture);
+  rpc StopContinuousCapture(StopContinuousCaptureRequest) returns (ContinuousCapture);
+  rpc GetContinuousCapture(GetContinuousCaptureRequest) returns (ContinuousCapture);
 }
 
 message AgentMessage {
@@ -97,6 +100,25 @@ message CreateSessionRequest {
   repeated CaptureTarget targets = 7;
 }
 
+message StartContinuousCaptureRequest {
+  repeated CaptureTarget targets = 1;
+  string filter = 2;
+  uint32 snaplen = 3;
+  uint32 reorder_window_ms = 4;
+}
+
+message StopContinuousCaptureRequest {}
+message GetContinuousCaptureRequest {}
+
+message ContinuousCapture {
+  string session_id = 1;
+  string status = 2;
+  int64 started_at_ns = 3;
+  uint64 retained_size = 4;
+  uint32 segment_count = 5;
+  string message = 6;
+}
+
 message CaptureTarget {
   string id = 1;
   InterfaceTarget interface_target = 2;
@@ -132,4 +154,5 @@ message CaptureSession {
   string status = 8;
   string message = 9;
   repeated CaptureTarget targets = 10;
+  string mode = 11;
 }

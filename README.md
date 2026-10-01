@@ -252,9 +252,16 @@ Nếu queue của một subscriber đầy, server drop packet chỉ trên subscr
 
 Các metric chính gồm packet received/emitted/late, reorder buffer size, subscriber drops/queue usage, agent captured/sent bytes và stream errors. Khi recording được bật, server xuất thêm `capmesh_recording_active`, số packet/byte, số segment, queue overflow và kết quả `COMPLETED/PARTIAL/TRUNCATED/FAILED`.
 
+## Continuous capture
+
+Server hỗ trợ một tiến trình ghi liên tục singleton. Client khởi động xong có thể
+thoát; server vẫn capture, chia segment và xóa file hoàn tất cũ nhất khi đạt
+`--record-max-session-size`. Xem [hướng dẫn continuous capture](docs/continuous-capture.md)
+cho các lệnh start/status/stop, cách stream song song và layout file.
+
 ## Giới hạn MVP
 
-- State chỉ ở memory, không HA và không replay/ring buffer.
+- State chỉ ở memory, không HA; continuous capture có retention theo file nhưng chưa hỗ trợ replay packet cũ qua API.
 - Đồng hồ worker phải đồng bộ bằng NTP/Chrony; reorder không sửa clock skew.
 - BPF được truyền dưới dạng một argument riêng, không qua shell; `dumpcap` trên agent là nơi compile và từ chối filter không hợp lệ.
 - Capture drop do kernel/`dumpcap` chưa được parse từ thống kê cuối phiên; metric được đăng ký nhưng chỉ tăng khi adapter capture bổ sung nguồn thống kê tương ứng.

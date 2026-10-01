@@ -115,10 +115,13 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	CaptureService_CreateSession_FullMethodName = "/capmesh.v1.CaptureService/CreateSession"
-	CaptureService_StopSession_FullMethodName   = "/capmesh.v1.CaptureService/StopSession"
-	CaptureService_GetSession_FullMethodName    = "/capmesh.v1.CaptureService/GetSession"
-	CaptureService_StreamPackets_FullMethodName = "/capmesh.v1.CaptureService/StreamPackets"
+	CaptureService_CreateSession_FullMethodName          = "/capmesh.v1.CaptureService/CreateSession"
+	CaptureService_StopSession_FullMethodName            = "/capmesh.v1.CaptureService/StopSession"
+	CaptureService_GetSession_FullMethodName             = "/capmesh.v1.CaptureService/GetSession"
+	CaptureService_StreamPackets_FullMethodName          = "/capmesh.v1.CaptureService/StreamPackets"
+	CaptureService_StartContinuousCapture_FullMethodName = "/capmesh.v1.CaptureService/StartContinuousCapture"
+	CaptureService_StopContinuousCapture_FullMethodName  = "/capmesh.v1.CaptureService/StopContinuousCapture"
+	CaptureService_GetContinuousCapture_FullMethodName   = "/capmesh.v1.CaptureService/GetContinuousCapture"
 )
 
 // CaptureServiceClient is the client API for CaptureService service.
@@ -129,6 +132,9 @@ type CaptureServiceClient interface {
 	StopSession(ctx context.Context, in *StopSessionRequest, opts ...grpc.CallOption) (*CaptureSession, error)
 	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*CaptureSession, error)
 	StreamPackets(ctx context.Context, in *StreamPacketsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PacketBatch], error)
+	StartContinuousCapture(ctx context.Context, in *StartContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error)
+	StopContinuousCapture(ctx context.Context, in *StopContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error)
+	GetContinuousCapture(ctx context.Context, in *GetContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error)
 }
 
 type captureServiceClient struct {
@@ -188,6 +194,36 @@ func (c *captureServiceClient) StreamPackets(ctx context.Context, in *StreamPack
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type CaptureService_StreamPacketsClient = grpc.ServerStreamingClient[PacketBatch]
 
+func (c *captureServiceClient) StartContinuousCapture(ctx context.Context, in *StartContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ContinuousCapture)
+	err := c.cc.Invoke(ctx, CaptureService_StartContinuousCapture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *captureServiceClient) StopContinuousCapture(ctx context.Context, in *StopContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ContinuousCapture)
+	err := c.cc.Invoke(ctx, CaptureService_StopContinuousCapture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *captureServiceClient) GetContinuousCapture(ctx context.Context, in *GetContinuousCaptureRequest, opts ...grpc.CallOption) (*ContinuousCapture, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ContinuousCapture)
+	err := c.cc.Invoke(ctx, CaptureService_GetContinuousCapture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CaptureServiceServer is the server API for CaptureService service.
 // All implementations must embed UnimplementedCaptureServiceServer
 // for forward compatibility.
@@ -196,6 +232,9 @@ type CaptureServiceServer interface {
 	StopSession(context.Context, *StopSessionRequest) (*CaptureSession, error)
 	GetSession(context.Context, *GetSessionRequest) (*CaptureSession, error)
 	StreamPackets(*StreamPacketsRequest, grpc.ServerStreamingServer[PacketBatch]) error
+	StartContinuousCapture(context.Context, *StartContinuousCaptureRequest) (*ContinuousCapture, error)
+	StopContinuousCapture(context.Context, *StopContinuousCaptureRequest) (*ContinuousCapture, error)
+	GetContinuousCapture(context.Context, *GetContinuousCaptureRequest) (*ContinuousCapture, error)
 	mustEmbedUnimplementedCaptureServiceServer()
 }
 
@@ -217,6 +256,15 @@ func (UnimplementedCaptureServiceServer) GetSession(context.Context, *GetSession
 }
 func (UnimplementedCaptureServiceServer) StreamPackets(*StreamPacketsRequest, grpc.ServerStreamingServer[PacketBatch]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamPackets not implemented")
+}
+func (UnimplementedCaptureServiceServer) StartContinuousCapture(context.Context, *StartContinuousCaptureRequest) (*ContinuousCapture, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StartContinuousCapture not implemented")
+}
+func (UnimplementedCaptureServiceServer) StopContinuousCapture(context.Context, *StopContinuousCaptureRequest) (*ContinuousCapture, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StopContinuousCapture not implemented")
+}
+func (UnimplementedCaptureServiceServer) GetContinuousCapture(context.Context, *GetContinuousCaptureRequest) (*ContinuousCapture, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetContinuousCapture not implemented")
 }
 func (UnimplementedCaptureServiceServer) mustEmbedUnimplementedCaptureServiceServer() {}
 func (UnimplementedCaptureServiceServer) testEmbeddedByValue()                        {}
@@ -304,6 +352,60 @@ func _CaptureService_StreamPackets_Handler(srv interface{}, stream grpc.ServerSt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type CaptureService_StreamPacketsServer = grpc.ServerStreamingServer[PacketBatch]
 
+func _CaptureService_StartContinuousCapture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartContinuousCaptureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).StartContinuousCapture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_StartContinuousCapture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).StartContinuousCapture(ctx, req.(*StartContinuousCaptureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CaptureService_StopContinuousCapture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopContinuousCaptureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).StopContinuousCapture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_StopContinuousCapture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).StopContinuousCapture(ctx, req.(*StopContinuousCaptureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CaptureService_GetContinuousCapture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetContinuousCaptureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).GetContinuousCapture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_GetContinuousCapture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).GetContinuousCapture(ctx, req.(*GetContinuousCaptureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CaptureService_ServiceDesc is the grpc.ServiceDesc for CaptureService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -322,6 +424,18 @@ var CaptureService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSession",
 			Handler:    _CaptureService_GetSession_Handler,
+		},
+		{
+			MethodName: "StartContinuousCapture",
+			Handler:    _CaptureService_StartContinuousCapture_Handler,
+		},
+		{
+			MethodName: "StopContinuousCapture",
+			Handler:    _CaptureService_StopContinuousCapture_Handler,
+		},
+		{
+			MethodName: "GetContinuousCapture",
+			Handler:    _CaptureService_GetContinuousCapture_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

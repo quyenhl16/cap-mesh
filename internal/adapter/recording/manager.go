@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quyenhl16/cap-mesh/internal/adapter/pcapng"
@@ -27,14 +30,16 @@ type Config struct {
 }
 
 type Manager struct {
-	config  Config
-	packets ports.PacketPublisher
-	logger  *slog.Logger
-	metrics *Metrics
-	mu      sync.Mutex
-	active  map[string]context.CancelFunc
-	closing bool
-	wg      sync.WaitGroup
+	config     Config
+	packets    ports.PacketPublisher
+	logger     *slog.Logger
+	metrics    *Metrics
+	mu         sync.Mutex
+	active     map[string]*sessionRecorder
+	completed  map[string]domain.RecordingUsage
+	onComplete func(string, string, string)
+	closing    bool
+	wg         sync.WaitGroup
 }
 
 type metadata struct {
@@ -55,6 +60,8 @@ type metadata struct {
 	CapturedBytes    uint64                 `json:"captured_bytes"`
 	Truncated        bool                   `json:"truncated"`
 	Error            string                 `json:"error,omitempty"`
+	Rolling          bool                   `json:"rolling,omitempty"`
+	RunID            string                 `json:"run_id,omitempty"`
 	Segments         []segmentMetadata      `json:"segments"`
 }
 
@@ -84,6 +91,12 @@ type sessionRecorder struct {
 	segmentStart time.Time
 	segmentPkts  uint64
 	segmentBytes uint64
+	rolling      bool
+	runID        string
+	retainedSize atomic.Int64
+	segmentCount atomic.Int64
+	finalStatus  string
+	finalError   string
 }
 
 type countingWriter struct {
@@ -123,7 +136,24 @@ func NewManager(config Config, packets ports.PacketPublisher, logger *slog.Logge
 		logger = slog.Default()
 	}
 	config.Directory = root
-	return &Manager{config: config, packets: packets, logger: logger, metrics: metrics, active: make(map[string]context.CancelFunc)}, nil
+	return &Manager{config: config, packets: packets, logger: logger, metrics: metrics, active: make(map[string]*sessionRecorder), completed: make(map[string]domain.RecordingUsage)}, nil
+}
+
+func (m *Manager) OnComplete(handler func(string, string, string)) {
+	m.mu.Lock()
+	m.onComplete = handler
+	m.mu.Unlock()
+}
+
+func (m *Manager) Usage(sessionID string) (domain.RecordingUsage, bool) {
+	m.mu.Lock()
+	recorder, active := m.active[sessionID]
+	usage, completed := m.completed[sessionID]
+	m.mu.Unlock()
+	if active && recorder != nil {
+		return recorder.usage(), true
+	}
+	return usage, completed
 }
 
 func (m *Manager) Start(session domain.Session) error {
@@ -149,13 +179,28 @@ func (m *Manager) Start(session domain.Session) error {
 		m.mu.Unlock()
 		return err
 	}
-	dateDir := filepath.Join(m.config.Directory, session.CreatedAt.UTC().Format("2006-01-02"))
-	if err := os.MkdirAll(dateDir, 0o750); err != nil {
-		return fail(fmt.Errorf("create recording date directory: %w", err))
-	}
-	sessionDir := filepath.Join(dateDir, session.ID)
-	if err := os.Mkdir(sessionDir, 0o750); err != nil {
-		return fail(fmt.Errorf("create recording session directory: %w", err))
+	rolling := session.Mode == domain.SessionModeContinuous
+	var sessionDir string
+	if rolling {
+		if m.config.SegmentSize <= 0 || m.config.MaxSessionSize <= 0 {
+			return fail(errors.New("continuous recording requires positive segment and maximum sizes"))
+		}
+		if m.config.SegmentSize > m.config.MaxSessionSize {
+			return fail(errors.New("continuous recording segment size must not exceed maximum size"))
+		}
+		sessionDir = filepath.Join(m.config.Directory, "continuous")
+		if err := os.MkdirAll(sessionDir, 0o750); err != nil {
+			return fail(fmt.Errorf("create continuous recording directory: %w", err))
+		}
+	} else {
+		dateDir := filepath.Join(m.config.Directory, session.CreatedAt.UTC().Format("2006-01-02"))
+		if err := os.MkdirAll(dateDir, 0o750); err != nil {
+			return fail(fmt.Errorf("create recording date directory: %w", err))
+		}
+		sessionDir = filepath.Join(dateDir, session.ID)
+		if err := os.Mkdir(sessionDir, 0o750); err != nil {
+			return fail(fmt.Errorf("create recording session directory: %w", err))
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -172,6 +217,8 @@ func (m *Manager) Start(session domain.Session) error {
 		cancel:       cancel,
 		logger:       m.logger,
 		metrics:      m.metrics,
+		rolling:      rolling,
+		runID:        session.CreatedAt.UTC().Format("20060102T150405.000000000Z") + "-" + session.ID,
 		metadata: metadata{
 			SchemaVersion:    1,
 			SessionID:        session.ID,
@@ -185,7 +232,19 @@ func (m *Manager) Start(session domain.Session) error {
 			SegmentSizeLimit: m.config.SegmentSize,
 			SessionSizeLimit: m.config.MaxSessionSize,
 			Segments:         make([]segmentMetadata, 0),
+			Rolling:          rolling,
 		},
+	}
+	recorder.metadata.RunID = recorder.runID
+	if rolling {
+		if err := recorder.loadRollingSegments(); err != nil {
+			cancel()
+			return fail(err)
+		}
+		if err := recorder.pruneOldest(m.config.SegmentSize); err != nil {
+			cancel()
+			return fail(err)
+		}
 	}
 	if err := recorder.writeMetadata(false); err != nil {
 		cancel()
@@ -197,7 +256,14 @@ func (m *Manager) Start(session domain.Session) error {
 	}
 
 	m.mu.Lock()
-	m.active[session.ID] = cancel
+	m.active[session.ID] = recorder
+	if rolling {
+		// The application exposes only the singleton's current or most recent run.
+		// Discard older usage snapshots so repeated restarts cannot grow this map.
+		clear(m.completed)
+	} else {
+		delete(m.completed, session.ID)
+	}
 	m.wg.Add(1)
 	m.mu.Unlock()
 	if m.metrics != nil {
@@ -206,9 +272,17 @@ func (m *Manager) Start(session domain.Session) error {
 	go func() {
 		defer m.wg.Done()
 		recorder.run()
+		usage := recorder.usage()
 		m.mu.Lock()
 		delete(m.active, session.ID)
+		if recorder.rolling {
+			m.completed[session.ID] = usage
+		}
+		handler := m.onComplete
 		m.mu.Unlock()
+		if handler != nil {
+			handler(session.ID, recorder.finalStatus, recorder.finalError)
+		}
 	}()
 	m.logger.Info("capture recording started", "session_id", session.ID, "directory", sessionDir)
 	return nil
@@ -217,9 +291,9 @@ func (m *Manager) Start(session domain.Session) error {
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	m.closing = true
-	for _, cancel := range m.active {
-		if cancel != nil {
-			cancel()
+	for _, recorder := range m.active {
+		if recorder != nil {
+			recorder.cancel()
 		}
 	}
 	m.mu.Unlock()
@@ -278,7 +352,7 @@ func (r *sessionRecorder) run() {
 				r.complete("FAILED", err.Error(), true)
 				return
 			}
-			if r.reachedSessionLimit() {
+			if !r.rolling && r.reachedSessionLimit() {
 				r.metadata.Truncated = true
 				r.complete("TRUNCATED", "max_session_size_reached", false)
 				return
@@ -297,7 +371,7 @@ func (r *sessionRecorder) run() {
 				r.complete("FAILED", err.Error(), true)
 				return
 			}
-			if r.reachedSessionLimit() {
+			if !r.rolling && r.reachedSessionLimit() {
 				r.metadata.Truncated = true
 				r.complete("TRUNCATED", "max_session_size_reached", false)
 				return
@@ -341,7 +415,7 @@ func (r *sessionRecorder) writeBatch(batch domain.PacketBatch) error {
 
 func (r *sessionRecorder) openSegment() error {
 	r.sequence++
-	path := filepath.Join(r.sessionDir, fmt.Sprintf("capture-%06d.pcapng.part", r.sequence))
+	path := filepath.Join(r.sessionDir, r.segmentName(true, false))
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
 	if err != nil {
 		return fmt.Errorf("create recording segment: %w", err)
@@ -384,6 +458,11 @@ func (r *sessionRecorder) rotate() error {
 	if err := r.finishSegment(false); err != nil {
 		return err
 	}
+	if r.rolling {
+		if err := r.pruneOldest(r.config.SegmentSize); err != nil {
+			return err
+		}
+	}
 	if err := r.writeMetadata(false); err != nil {
 		return err
 	}
@@ -417,10 +496,7 @@ func (r *sessionRecorder) finishSegment(partial bool) error {
 		return fmt.Errorf("close recording segment: %w", err)
 	}
 	finishedAt := time.Now().UTC()
-	name := fmt.Sprintf("capture-%06d.pcapng", r.sequence)
-	if partial {
-		name = fmt.Sprintf("capture-%06d.partial.pcapng", r.sequence)
-	}
+	name := r.segmentName(false, partial)
 	finalPath := filepath.Join(r.sessionDir, name)
 	if err := os.Rename(partPath, finalPath); err != nil {
 		return fmt.Errorf("finalize recording segment: %w", err)
@@ -443,6 +519,8 @@ func (r *sessionRecorder) finishSegment(partial bool) error {
 		r.metrics.segments.Inc()
 		r.metrics.fileBytes.Add(float64(info.Size()))
 	}
+	r.retainedSize.Store(r.metadata.TotalFileSize)
+	r.segmentCount.Store(int64(len(r.metadata.Segments)))
 	r.file = nil
 	r.writer = nil
 	r.counter = nil
@@ -458,10 +536,22 @@ func (r *sessionRecorder) complete(status, message string, partial bool) {
 			message += "; " + err.Error()
 		}
 	}
+	if r.rolling {
+		if err := r.pruneOldest(0); err != nil {
+			status = "FAILED"
+			if message == "" {
+				message = err.Error()
+			} else {
+				message += "; " + err.Error()
+			}
+		}
+	}
 	finishedAt := time.Now().UTC()
 	r.metadata.Status = status
 	r.metadata.Error = message
 	r.metadata.FinishedAt = &finishedAt
+	r.finalStatus = status
+	r.finalError = message
 	if err := r.writeMetadata(true); err != nil {
 		r.logger.Error("finalize recording metadata failed", "session_id", r.metadata.SessionID, "error", err)
 	}
@@ -476,6 +566,86 @@ func (r *sessionRecorder) complete(status, message string, partial bool) {
 	}
 }
 
+func (r *sessionRecorder) usage() domain.RecordingUsage {
+	return domain.RecordingUsage{RetainedSize: r.retainedSize.Load(), SegmentCount: int(r.segmentCount.Load())}
+}
+
+func (r *sessionRecorder) segmentName(part, partial bool) string {
+	base := fmt.Sprintf("capture-%06d", r.sequence)
+	if r.rolling {
+		base = fmt.Sprintf("trace-%s-%06d", r.runID, r.sequence)
+	}
+	if partial {
+		base += ".partial"
+	}
+	name := base + ".pcapng"
+	if part {
+		name += ".part"
+	}
+	return name
+}
+
+func (r *sessionRecorder) loadRollingSegments() error {
+	entries, err := os.ReadDir(r.sessionDir)
+	if err != nil {
+		return fmt.Errorf("scan continuous recording directory: %w", err)
+	}
+	var segments []segmentMetadata
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() && strings.HasPrefix(name, "trace-") && strings.HasSuffix(name, ".pcapng.part") {
+			if err := os.Remove(filepath.Join(r.sessionDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove stale continuous segment %s: %w", name, err)
+			}
+			continue
+		}
+		if entry.IsDir() || !strings.HasPrefix(name, "trace-") || !strings.HasSuffix(name, ".pcapng") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat continuous segment %s: %w", name, err)
+		}
+		segments = append(segments, segmentMetadata{File: name, Size: info.Size(), StartedAt: info.ModTime().UTC(), FinishedAt: info.ModTime().UTC()})
+	}
+	sort.Slice(segments, func(i, j int) bool {
+		if segments[i].FinishedAt.Equal(segments[j].FinishedAt) {
+			return segments[i].File < segments[j].File
+		}
+		return segments[i].FinishedAt.Before(segments[j].FinishedAt)
+	})
+	for index := range segments {
+		segments[index].Sequence = index + 1
+		r.metadata.TotalFileSize += segments[index].Size
+	}
+	r.metadata.Segments = segments
+	r.retainedSize.Store(r.metadata.TotalFileSize)
+	r.segmentCount.Store(int64(len(segments)))
+	return nil
+}
+
+func (r *sessionRecorder) pruneOldest(reserve int64) error {
+	if !r.rolling || r.config.MaxSessionSize <= 0 {
+		return nil
+	}
+	for r.metadata.TotalFileSize+reserve > r.config.MaxSessionSize && len(r.metadata.Segments) > 0 {
+		oldest := r.metadata.Segments[0]
+		path := filepath.Join(r.sessionDir, oldest.File)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("delete oldest continuous segment %s: %w", oldest.File, err)
+		}
+		r.metadata.TotalFileSize -= oldest.Size
+		r.metadata.Segments = r.metadata.Segments[1:]
+		if r.metrics != nil {
+			r.metrics.deletedSegments.Inc()
+			r.metrics.deletedBytes.Add(float64(oldest.Size))
+		}
+	}
+	r.retainedSize.Store(r.metadata.TotalFileSize)
+	r.segmentCount.Store(int64(len(r.metadata.Segments)))
+	return nil
+}
+
 func (r *sessionRecorder) writeMetadata(final bool) error {
 	data, err := json.MarshalIndent(r.metadata, "", "  ")
 	if err != nil {
@@ -485,8 +655,14 @@ func (r *sessionRecorder) writeMetadata(final bool) error {
 	if err := os.WriteFile(partPath, append(data, '\n'), 0o640); err != nil {
 		return fmt.Errorf("write recording metadata: %w", err)
 	}
-	if final {
-		if err := os.Rename(partPath, filepath.Join(r.sessionDir, "metadata.json")); err != nil {
+	if final || r.rolling {
+		finalPath := filepath.Join(r.sessionDir, "metadata.json")
+		if r.rolling {
+			if err := os.Remove(finalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("replace recording metadata: %w", err)
+			}
+		}
+		if err := os.Rename(partPath, finalPath); err != nil {
 			return fmt.Errorf("finalize recording metadata: %w", err)
 		}
 	}

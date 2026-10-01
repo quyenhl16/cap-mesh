@@ -53,6 +53,10 @@ type CaptureRecorder interface {
 	Start(domain.Session) error
 }
 
+type RecordingUsageProvider interface {
+	Usage(string) (domain.RecordingUsage, bool)
+}
+
 type WorkloadResolver interface {
 	Resolve(context.Context, domain.WorkloadTarget, string) ([]domain.CaptureSource, error)
 }

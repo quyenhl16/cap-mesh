@@ -40,9 +40,9 @@ func (c AuthConfig) tokensForMethod(method string) []string {
 	switch method {
 	case "/capmesh.v1.AgentService/Connect":
 		return []string{c.SharedToken, c.AgentToken}
-	case "/capmesh.v1.CaptureService/CreateSession", "/capmesh.v1.CaptureService/StopSession":
+	case "/capmesh.v1.CaptureService/CreateSession", "/capmesh.v1.CaptureService/StopSession", "/capmesh.v1.CaptureService/StartContinuousCapture", "/capmesh.v1.CaptureService/StopContinuousCapture":
 		return []string{c.SharedToken, c.AdminToken}
-	case "/capmesh.v1.CaptureService/GetSession", "/capmesh.v1.CaptureService/StreamPackets":
+	case "/capmesh.v1.CaptureService/GetSession", "/capmesh.v1.CaptureService/StreamPackets", "/capmesh.v1.CaptureService/GetContinuousCapture":
 		return []string{c.SharedToken, c.AdminToken, c.ViewerToken}
 	default:
 		return []string{c.SharedToken, c.AdminToken}

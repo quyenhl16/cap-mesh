@@ -24,7 +24,11 @@ func PacketBatchFromProto(batch *capmeshv1.PacketBatch) domain.PacketBatch {
 }
 
 func SessionToProto(session domain.Session) *capmeshv1.CaptureSession {
-	return &capmeshv1.CaptureSession{Id: session.ID, Nodes: session.Nodes, LogicalInterface: session.LogicalInterface, Filter: session.Filter, Snaplen: session.Snaplen, CreatedAtNs: session.CreatedAt.UnixNano(), ExpiresAtNs: session.ExpiresAt.UnixNano(), Status: string(session.Status), Message: session.Message, Targets: CaptureTargetsToProto(session.Targets)}
+	var expiresAt int64
+	if !session.ExpiresAt.IsZero() {
+		expiresAt = session.ExpiresAt.UnixNano()
+	}
+	return &capmeshv1.CaptureSession{Id: session.ID, Nodes: session.Nodes, LogicalInterface: session.LogicalInterface, Filter: session.Filter, Snaplen: session.Snaplen, CreatedAtNs: session.CreatedAt.UnixNano(), ExpiresAtNs: expiresAt, Status: string(session.Status), Message: session.Message, Targets: CaptureTargetsToProto(session.Targets), Mode: string(session.Mode)}
 }
 
 func CaptureSourceToProto(source domain.CaptureSource) *capmeshv1.CaptureSource {

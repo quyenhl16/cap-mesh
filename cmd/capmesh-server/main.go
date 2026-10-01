@@ -23,6 +23,7 @@ import (
 	"github.com/quyenhl16/cap-mesh/internal/adapter/memory"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/recording"
+	appcontinuous "github.com/quyenhl16/cap-mesh/internal/application/continuous"
 	appsession "github.com/quyenhl16/cap-mesh/internal/application/session"
 	appstream "github.com/quyenhl16/cap-mesh/internal/application/stream"
 	"github.com/quyenhl16/cap-mesh/internal/core/ports"
@@ -111,6 +112,10 @@ func main() {
 		os.Exit(2)
 	}
 	sessions.SetWorkloadResolver(kubernetes.NewWorkloadResolver(), *workloadReconcileInterval)
+	continuousCapture := appcontinuous.NewService(sessions, recorderManager, recorderManager != nil)
+	if recorderManager != nil {
+		recorderManager.OnComplete(continuousCapture.RecordingCompleted)
+	}
 	agents.OnDisconnect(func(node string) {
 		logger.Warn("marking sessions after agent disconnect", "node", node)
 		sessions.AgentDisconnected(context.Background(), node)
@@ -139,7 +144,9 @@ func main() {
 	agentServer := grpcserver.NewAgentServer(agents, packetService, logger)
 	agentServer.OnCaptureStatus(sessions.CaptureStatus)
 	capmeshv1.RegisterAgentServiceServer(grpcServer, agentServer)
-	capmeshv1.RegisterCaptureServiceServer(grpcServer, grpcserver.NewCaptureServer(sessions, packetService, logger))
+	captureServer := grpcserver.NewCaptureServer(sessions, packetService, logger)
+	captureServer.SetContinuousCapture(continuousCapture)
+	capmeshv1.RegisterCaptureServiceServer(grpcServer, captureServer)
 
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}
 	go func() {

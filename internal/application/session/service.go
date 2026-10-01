@@ -32,6 +32,7 @@ type CreateInput struct {
 	Snaplen          uint32
 	TTL              time.Duration
 	ReorderWindow    time.Duration
+	Continuous       bool
 }
 
 type runtimeSession struct {
@@ -80,6 +81,13 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 		return domain.Session{}, err
 	}
 	now := s.now()
+	mode := domain.SessionModeNormal
+	var expiresAt time.Time
+	if input.Continuous {
+		mode = domain.SessionModeContinuous
+	} else {
+		expiresAt = now.Add(input.TTL)
+	}
 	session := domain.Session{
 		ID:               newID(),
 		Nodes:            sourceNodes(sources),
@@ -89,8 +97,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 		Snaplen:          input.Snaplen,
 		ReorderWindow:    input.ReorderWindow,
 		CreatedAt:        now,
-		ExpiresAt:        now.Add(input.TTL),
+		ExpiresAt:        expiresAt,
 		Status:           domain.SessionStarting,
+		Mode:             mode,
 	}
 	if err := s.repository.Create(ctx, session); err != nil {
 		return domain.Session{}, err
@@ -152,7 +161,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 		if hasFollower {
 			go s.reconcileLoop(runtimeCtx, session.ID)
 		}
-		time.AfterFunc(input.TTL, func() { _, _ = s.Stop(context.Background(), session.ID) })
+		if !input.Continuous {
+			time.AfterFunc(input.TTL, func() { _, _ = s.Stop(context.Background(), session.ID) })
+		}
 	}
 	return session, nil
 }
@@ -517,7 +528,7 @@ func validate(input CreateInput) error {
 	switch {
 	case input.Snaplen < 1 || input.Snaplen > 65535:
 		return errors.New("snaplen must be between 1 and 65535")
-	case input.TTL < time.Second || input.TTL > 24*time.Hour:
+	case !input.Continuous && (input.TTL < time.Second || input.TTL > 24*time.Hour):
 		return errors.New("TTL must be between 1 second and 24 hours")
 	case input.ReorderWindow < 0 || input.ReorderWindow > 5*time.Second:
 		return errors.New("reorder window must be between 0 and 5 seconds")

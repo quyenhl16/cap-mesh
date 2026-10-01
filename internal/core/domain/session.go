@@ -6,6 +6,7 @@ import (
 )
 
 type SessionStatus string
+type SessionMode string
 
 const (
 	SessionStarting SessionStatus = "STARTING"
@@ -13,6 +14,11 @@ const (
 	SessionStopping SessionStatus = "STOPPING"
 	SessionStopped  SessionStatus = "STOPPED"
 	SessionFailed   SessionStatus = "FAILED"
+)
+
+const (
+	SessionModeNormal     SessionMode = "NORMAL"
+	SessionModeContinuous SessionMode = "CONTINUOUS"
 )
 
 var ErrInvalidTransition = errors.New("invalid session state transition")
@@ -29,6 +35,12 @@ type Session struct {
 	Status           SessionStatus
 	Message          string
 	Targets          []CaptureTarget
+	Mode             SessionMode
+}
+
+type RecordingUsage struct {
+	RetainedSize int64
+	SegmentCount int
 }
 
 type CaptureTarget struct {

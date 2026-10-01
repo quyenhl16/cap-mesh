@@ -32,6 +32,9 @@ func main() {
 	server := flag.String("server", "127.0.0.1:18443", "capmesh-server address")
 	sessionID := flag.String("session", "", "existing capture session ID")
 	create := flag.Bool("create", false, "create a session before subscribing")
+	continuousStart := flag.Bool("continuous-start", false, "start the singleton server-owned continuous capture and exit")
+	continuousStop := flag.Bool("continuous-stop", false, "stop the singleton continuous capture and exit")
+	continuousStatus := flag.Bool("continuous-status", false, "show singleton continuous capture status and exit")
 	nodes := flag.String("nodes", "", "comma-separated node names for a new session")
 	var logicalInterfaces stringList
 	flag.Var(&logicalInterfaces, "interface", "logical interface alias configured on the agents; repeat to capture multiple interfaces")
@@ -52,8 +55,13 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	if !*create && *sessionID == "" {
-		logger.Error("--session is required unless --create is used")
+	controlModes := boolCount(*continuousStart, *continuousStop, *continuousStatus)
+	if controlModes > 1 || (controlModes > 0 && (*create || *sessionID != "")) {
+		logger.Error("--continuous-start, --continuous-stop, --continuous-status, --create, and --session are mutually exclusive")
+		os.Exit(2)
+	}
+	if !*create && *sessionID == "" && controlModes == 0 {
+		logger.Error("--session, --create, or a continuous capture control flag is required")
 		os.Exit(2)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -66,37 +74,51 @@ func main() {
 	defer connection.Close()
 	client := capmeshv1.NewCaptureServiceClient(connection)
 	authContext := grpcclient.AuthContext(ctx, *token)
-	created := false
-	if *create {
-		workloadRequested := *workloadNamespace != "" || *workloadKind != "" || *workloadName != ""
-		if workloadRequested && (*workloadNamespace == "" || *workloadKind == "" || *workloadName == "") {
-			logger.Error("--namespace, --workload-kind, and --workload-name must be provided together")
+	if *continuousStop {
+		capture, err := client.StopContinuousCapture(authContext, &capmeshv1.StopContinuousCaptureRequest{})
+		if err != nil {
+			logger.Error("stop continuous capture failed", "error", err)
+			os.Exit(1)
+		}
+		printContinuousCapture(capture)
+		return
+	}
+	if *continuousStatus {
+		capture, err := client.GetContinuousCapture(authContext, &capmeshv1.GetContinuousCaptureRequest{})
+		if err != nil {
+			logger.Error("get continuous capture failed", "error", err)
+			os.Exit(1)
+		}
+		printContinuousCapture(capture)
+		return
+	}
+	if *continuousStart {
+		targets, _, err := buildTargets(logicalInterfaces, *nodes, *workloadNamespace, *workloadKind, *workloadName, *direction, *follow, *maxPods)
+		if err != nil {
+			logger.Error("invalid capture target", "error", err)
 			os.Exit(2)
 		}
-		if !workloadRequested && len(logicalInterfaces) == 0 {
-			logicalInterfaces = append(logicalInterfaces, "A")
+		capture, err := client.StartContinuousCapture(authContext, &capmeshv1.StartContinuousCaptureRequest{Targets: targets, Filter: *filter, Snaplen: uint32(*snaplen), ReorderWindowMs: uint32(reorderWindow.Milliseconds())})
+		if err != nil {
+			logger.Error("start continuous capture failed", "error", err)
+			os.Exit(1)
+		}
+		printContinuousCapture(capture)
+		return
+	}
+	created := false
+	if *create {
+		targets, workloadRequested, err := buildTargets(logicalInterfaces, *nodes, *workloadNamespace, *workloadKind, *workloadName, *direction, *follow, *maxPods)
+		if err != nil {
+			logger.Error("invalid capture target", "error", err)
+			os.Exit(2)
 		}
 		request := &capmeshv1.CreateSessionRequest{Filter: *filter, Snaplen: uint32(*snaplen), TtlSeconds: uint32(ttl.Seconds()), ReorderWindowMs: uint32(reorderWindow.Milliseconds())}
-		if !workloadRequested && len(logicalInterfaces) == 1 {
-			interfaceAlias, err := interfacealias.Normalize(logicalInterfaces[0])
-			if err != nil {
-				logger.Error("invalid interface alias", "error", err)
-				os.Exit(2)
-			}
+		if !workloadRequested && len(targets) == 1 && targets[0].GetInterfaceTarget() != nil {
 			request.Nodes = splitNodes(*nodes)
-			request.LogicalInterface = interfaceAlias
+			request.LogicalInterface = targets[0].GetInterfaceTarget().GetLogicalInterface()
 		} else {
-			for index, logicalInterface := range logicalInterfaces {
-				interfaceAlias, err := interfacealias.Normalize(logicalInterface)
-				if err != nil {
-					logger.Error("invalid interface alias", "error", err)
-					os.Exit(2)
-				}
-				request.Targets = append(request.Targets, &capmeshv1.CaptureTarget{Id: fmt.Sprintf("interface-%d", index+1), InterfaceTarget: &capmeshv1.InterfaceTarget{Nodes: splitNodes(*nodes), LogicalInterface: interfaceAlias}})
-			}
-			if workloadRequested {
-				request.Targets = append(request.Targets, &capmeshv1.CaptureTarget{Id: "workload-1", WorkloadTarget: &capmeshv1.WorkloadTarget{Namespace: *workloadNamespace, Kind: *workloadKind, Name: *workloadName, Direction: *direction, Follow: *follow, MaxPods: uint32(*maxPods)}})
-			}
+			request.Targets = targets
 		}
 		session, err := client.CreateSession(authContext, request)
 		if err != nil {
@@ -173,6 +195,42 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("capture stream completed", "session_id", *sessionID, "packets_received", packetsReceived, "pcapng_blocks_written", packetsReceived)
+}
+
+func buildTargets(logicalInterfaces []string, nodes, namespace, kind, name, direction string, follow bool, maxPods uint) ([]*capmeshv1.CaptureTarget, bool, error) {
+	workloadRequested := namespace != "" || kind != "" || name != ""
+	if workloadRequested && (namespace == "" || kind == "" || name == "") {
+		return nil, false, errors.New("--namespace, --workload-kind, and --workload-name must be provided together")
+	}
+	if !workloadRequested && len(logicalInterfaces) == 0 {
+		logicalInterfaces = []string{"A"}
+	}
+	var targets []*capmeshv1.CaptureTarget
+	for index, logicalInterface := range logicalInterfaces {
+		interfaceAlias, err := interfacealias.Normalize(logicalInterface)
+		if err != nil {
+			return nil, false, err
+		}
+		targets = append(targets, &capmeshv1.CaptureTarget{Id: fmt.Sprintf("interface-%d", index+1), InterfaceTarget: &capmeshv1.InterfaceTarget{Nodes: splitNodes(nodes), LogicalInterface: interfaceAlias}})
+	}
+	if workloadRequested {
+		targets = append(targets, &capmeshv1.CaptureTarget{Id: "workload-1", WorkloadTarget: &capmeshv1.WorkloadTarget{Namespace: namespace, Kind: kind, Name: name, Direction: direction, Follow: follow, MaxPods: uint32(maxPods)}})
+	}
+	return targets, workloadRequested, nil
+}
+
+func boolCount(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
+	}
+	return count
+}
+
+func printContinuousCapture(capture *capmeshv1.ContinuousCapture) {
+	fmt.Printf("session_id=%s status=%s retained_size=%d segments=%d message=%q\n", capture.GetSessionId(), capture.GetStatus(), capture.GetRetainedSize(), capture.GetSegmentCount(), capture.GetMessage())
 }
 
 func splitNodes(value string) []string {
