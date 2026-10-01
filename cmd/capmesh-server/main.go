@@ -42,7 +42,7 @@ func main() {
 	tlsKey := flag.String("tls-key", "", "TLS private key file")
 	subscriberQueue := flag.Int("subscriber-queue-size", 10000, "per-subscriber packet queue size")
 	recordDirectory := flag.String("record-dir", "", "directory for server-side PCAPNG recordings; empty disables recording")
-	recordSegmentSize := flag.String("record-segment-size", "100MiB", "maximum size of each PCAPNG segment; 0 disables rotation")
+	recordSegmentSize := flag.String("record-segment-size", "10MiB", "maximum size of each PCAPNG segment; 0 disables rotation")
 	recordMaxSessionSize := flag.String("record-max-session-size", "10GiB", "maximum total recording size per session; 0 means unlimited")
 	recordQueueSize := flag.Int("record-queue-size", 65536, "packet queue size for each session recorder")
 	workloadReconcileInterval := flag.Duration("workload-reconcile-interval", 5*time.Second, "interval for reconciling workload pods and Calico endpoints")

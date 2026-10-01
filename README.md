@@ -68,7 +68,7 @@ Terminal 1 — server không TLS cho local:
 go run ./cmd/capmesh-server \
   --token dev-secret \
   --record-dir ./data/captures \
-  --record-segment-size 100MiB \
+  --record-segment-size 10MiB \
   --record-max-session-size 10GiB
 ```
 
@@ -99,7 +99,7 @@ go run ./cmd/capmesh-client \
   --nodes worker-local \
   --interface management \
   --filter "tcp port 443" \
-  --snaplen 256 \
+  --snaplen 4096 \
   --ttl 5m \
   --token dev-secret \
   --insecure \
@@ -283,7 +283,7 @@ Recording được bật trong ConfigMap:
 # ConfigMap data
 data:
   CAPMESH_RECORD_DIR: /app/captures
-  CAPMESH_RECORD_SEGMENT_SIZE: 100MiB
+  CAPMESH_RECORD_SEGMENT_SIZE: 10MiB
   CAPMESH_RECORD_MAX_SESSION_SIZE: 10GiB
   CAPMESH_RECORD_QUEUE_SIZE: "65536"
 
@@ -308,12 +308,13 @@ cho scheduling/binding, còn dung lượng thực phụ thuộc ổ đĩa của 
 | --- | --- | --- |
 | Server | `--subscriber-queue-size` | `10000` |
 | Server | `--record-dir` | Rỗng, recording bị tắt |
-| Server | `--record-segment-size` | `100MiB`; `0` để không chia segment |
+| Server | `--record-segment-size` | `10MiB`; `0` để không chia segment |
 | Server | `--record-max-session-size` | `10GiB`; `0` để không giới hạn tổng mỗi session |
 | Server | `--record-queue-size` | `65536` packet mỗi session |
 | Agent | `--interface alias=physical` | Bắt buộc ít nhất một ánh xạ, lặp lại tối đa 10 lần |
 | Agent | batch packet / delay | `64` / `10ms` (MVP cố định) |
 | Agent | `--capture-log-interval` | `10s`; đặt `0` để tắt log định kỳ |
+| Client | `--snaplen` | `4096` byte; dùng `65535` khi cần toàn bộ payload |
 | Client | `--reorder-window` | `300ms` |
 | Client | flush packet / delay | `64` / `50ms` (MVP cố định) |
 | Client | `--ttl` | `5m` |
@@ -323,7 +324,7 @@ Nếu queue của một subscriber đầy, server drop packet chỉ trên subscr
 ## Metrics
 
 - Server: `:19090/metrics`.
-- Agent: `:9091/metrics`.
+- Agent: `:19091/metrics`.
 
 Các metric chính gồm packet received/emitted/late, reorder buffer size, subscriber drops/queue usage, agent captured/sent bytes và stream errors. Khi recording được bật, server xuất thêm `capmesh_recording_active`, số packet/byte, số segment, queue overflow và kết quả `COMPLETED/PARTIAL/TRUNCATED/FAILED`.
 

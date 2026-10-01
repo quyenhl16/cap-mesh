@@ -10,7 +10,7 @@ Server-side recording must be enabled, and both limits must be positive:
 
 ```yaml
 CAPMESH_RECORD_DIR: /app/captures
-CAPMESH_RECORD_SEGMENT_SIZE: 100MiB
+CAPMESH_RECORD_SEGMENT_SIZE: 10MiB
 CAPMESH_RECORD_MAX_SESSION_SIZE: 10GiB
 ```
 

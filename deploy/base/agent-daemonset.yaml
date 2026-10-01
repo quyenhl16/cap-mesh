@@ -38,7 +38,7 @@ spec:
               add: ["NET_RAW", "NET_ADMIN"]
           ports:
             - name: metrics
-              containerPort: 9091
+              containerPort: 19091
           resources:
             requests:
               cpu: 100m

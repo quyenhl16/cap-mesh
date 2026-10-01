@@ -78,7 +78,7 @@ func main() {
 	insecureTransport := flag.Bool("insecure", false, "disable TLS (local development only)")
 	caFile := flag.String("tls-ca", "", "server CA certificate")
 	serverName := flag.String("tls-server-name", "", "TLS server name override")
-	metricsAddress := flag.String("metrics-listen", ":9091", "Prometheus metrics listen address")
+	metricsAddress := flag.String("metrics-listen", ":19091", "Prometheus metrics listen address")
 	captureLogInterval := flag.Duration("capture-log-interval", 10*time.Second, "interval for per-interface packet count logs; 0 disables periodic logs")
 	interfacesFromKubernetes := flag.Bool("interfaces-from-kubernetes", false, "read interface mappings from Node annotations")
 	if err := envconfig.Apply(flag.CommandLine, map[string]string{

@@ -48,7 +48,7 @@ func main() {
 	follow := flag.Bool("follow", true, "follow workload scale, restart, and reschedule changes")
 	maxPods := flag.Uint("max-pods", 100, "maximum pods allowed for a workload target")
 	filter := flag.String("filter", "", "BPF capture filter")
-	snaplen := flag.Uint("snaplen", 256, "packet snapshot length")
+	snaplen := flag.Uint("snaplen", 4096, "packet snapshot length")
 	ttl := flag.Duration("ttl", 5*time.Minute, "capture session lifetime")
 	reorderWindow := flag.Duration("reorder-window", 300*time.Millisecond, "packet reorder window")
 	token := flag.String("token", os.Getenv("CAPMESH_TOKEN"), "shared bearer token")
