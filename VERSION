@@ -1,8 +1,8 @@
 remote: https://github.com/quyenhl16/cap-mesh.git
 branch: master
 latest_commit:
-  hash: 65b48debaec69720600d6ad5932f5e1e614bc1ee
-  short_hash: 65b48de
-  date: 2026-10-01T22:29:02+07:00
-  subject: "feat: add continuous workload log capture"
-latest_tag: 0.0.11
+  hash: dc5a62bd80cbd247906761e9df0e161d59b6211f
+  short_hash: dc5a62b
+  date: 2026-10-03T13:52:30+07:00
+  subject: "feat: add resilient recordings and client commands"
+latest_tag: 0.0.12
