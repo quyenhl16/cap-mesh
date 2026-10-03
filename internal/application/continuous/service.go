@@ -49,6 +49,19 @@ func NewService(sessions *appsession.Service, usage ports.RecordingUsageProvider
 	return &Service{sessions: sessions, usage: usage, recordingConfigured: recordingConfigured, state: Capture{Status: StateStopped}}
 }
 
+func (s *Service) Restore(session domain.Session) error {
+	if session.Mode != domain.SessionModeContinuous || session.ID == "" {
+		return fmt.Errorf("invalid continuous session recovery state")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.Status != StateStopped {
+		return fmt.Errorf("%w: continuous capture is %s", ports.ErrAlreadyExists, s.state.Status)
+	}
+	s.state = Capture{SessionID: session.ID, Status: StateRunning, StartedAt: session.CreatedAt, Message: session.Message}
+	return nil
+}
+
 func (s *Service) Start(ctx context.Context, input StartInput) (Capture, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

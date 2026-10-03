@@ -1,6 +1,7 @@
 package logrecording
 
 import (
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -12,6 +13,63 @@ import (
 
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
+
+func TestFactoryPersistsDesiredStateAcrossRecorderClose(t *testing.T) {
+	root := t.TempDir()
+	config := Config{Directory: root, SegmentSize: 1024, MaxRetainedSize: 4096, SyncInterval: time.Hour}
+	factory, err := NewFactory(config, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := domain.LogCaptureRun{RunID: "recover-run", StartedAt: time.Now().UTC(), SinceSeconds: 30, Targets: []domain.WorkloadLogTarget{{Namespace: "ns", Kind: "deployment", Name: "api"}}}
+	recorder, err := factory.Start(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := domain.LogRecord{Target: run.Targets[0], PodName: "api-0", PodUID: "uid-1", Container: "main", Data: []byte("before restart\n")}
+	if err := recorder.Write(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.Close("STOPPED", "server shutdown"); err != nil {
+		t.Fatal(err)
+	}
+	nextFactory, err := NewFactory(config, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := nextFactory.RecoverableRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].RunID != run.RunID || runs[0].SinceSeconds != run.SinceSeconds {
+		t.Fatalf("unexpected recovered runs: %#v", runs)
+	}
+	restarted, err := nextFactory.Start(runs[0])
+	if err != nil {
+		t.Fatalf("restart recorder with existing segments: %v", err)
+	}
+	record.Data = []byte("after restart\n")
+	if err := restarted.Write(record); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Close("STOPPED", "server shutdown"); err != nil {
+		t.Fatal(err)
+	}
+	secondSegment := filepath.Join(root, "logs", "continuous", run.RunID, "ns", "deployment-api", "api-0_uid-1", "main", "restart-0", "log-000002.log")
+	if _, err := os.Stat(secondSegment); err != nil {
+		t.Fatalf("recovered recorder did not continue segment sequence: %v", err)
+	}
+	if err := nextFactory.SetRunDesiredState(run.RunID, "STOPPED"); err != nil {
+		t.Fatal(err)
+	}
+	runs, err = nextFactory.RecoverableRuns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("explicitly stopped run was recoverable: %#v", runs)
+	}
+}
 
 func TestRecorderPreservesRawLogsAndSeparatesPodInstancesAndRestarts(t *testing.T) {
 	root := t.TempDir()

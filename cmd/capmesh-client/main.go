@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -15,10 +16,13 @@ import (
 	"time"
 
 	capmeshv1 "github.com/quyenhl16/cap-mesh/api/capmesh/v1"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/clientconfig"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcapi"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/grpcclient"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/pcapng"
 	"github.com/quyenhl16/cap-mesh/internal/core/interfacealias"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type stringList []string
@@ -30,9 +34,54 @@ func (values *stringList) Set(value string) error {
 }
 
 func main() {
-	server := flag.String("server", "127.0.0.1:18443", "capmesh-server address")
+	rawArgs := os.Args[1:]
+	if len(rawArgs) == 1 && (rawArgs[0] == "help" || rawArgs[0] == "--help" || rawArgs[0] == "-h") {
+		printCommandUsage(os.Stdout)
+		return
+	}
+	globalPrefix, commandArgs := leadingGlobalArgs(rawArgs)
+	if len(commandArgs) > 0 && commandArgs[0] == "config" {
+		configArgs := append(append([]string(nil), commandArgs[1:]...), globalPrefix...)
+		if err := runConfigCommand(configArgs, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(2)
+		}
+		return
+	}
+	args, modernCommand, err := translateCommandArgs(rawArgs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		printCommandUsage(os.Stderr)
+		os.Exit(2)
+	}
+	os.Args = append([]string{os.Args[0]}, args...)
+	flag.Usage = func() { printCommandUsage(flag.CommandLine.Output()) }
+	defaultConfigPath, err := clientconfig.DefaultPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(2)
+	}
+	configPathValue := argumentValue(args, "--config", defaultConfigPath)
+	contextNameValue := argumentValue(args, "--context", "")
+	config, err := clientconfig.Load(configPathValue)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(2)
+	}
+	effective, err := config.Resolve(contextNameValue, os.LookupEnv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(2)
+	}
+
+	server := flag.String("server", effective.Server, "capmesh-server address")
 	sessionID := flag.String("session", "", "existing capture session ID")
+	getSessionID := flag.String("get-session", "", "get a capture session")
+	stopSessionID := flag.String("stop-session", "", "stop a capture session")
+	getAgentName := flag.String("get-agent", "", "get a connected agent")
+	getRecordingID := flag.String("get-recording", "", "get a normal session recording")
 	create := flag.Bool("create", false, "create a session before subscribing")
+	createOnly := flag.Bool("create-only", false, "create a session and exit")
 	continuousStart := flag.Bool("continuous-start", false, "start the singleton server-owned continuous capture and exit")
 	continuousStop := flag.Bool("continuous-stop", false, "stop the singleton continuous capture and exit")
 	continuousStatus := flag.Bool("continuous-status", false, "show singleton continuous capture status and exit")
@@ -41,38 +90,68 @@ func main() {
 	logStatus := flag.Bool("log-status", false, "show singleton workload log capture status and exit")
 	listAgents := flag.Bool("list-agents", false, "list connected agents and their interface mappings")
 	listSessions := flag.Bool("list-sessions", false, "list running normal capture sessions")
+	listRecordings := flag.Bool("list-recordings", false, "list normal session recording directories and sizes")
+	cleanRecordings := flag.Bool("clean-recordings", false, "delete oldest completed normal session recordings until usage is at most 50% of the configured limit")
+	dryRun := flag.Bool("dry-run", false, "show what --clean-recordings would delete without deleting files")
+	yes := flag.Bool("yes", false, "confirm destructive recording cleanup without prompting")
 	nodes := flag.String("nodes", "", "comma-separated node names for a new session")
 	var logicalInterfaces stringList
 	flag.Var(&logicalInterfaces, "interface", "logical interface alias configured on the agents; repeat to capture multiple interfaces")
 	workloadNamespace := flag.String("namespace", "", "namespace of the workload capture target")
 	workloadKind := flag.String("workload-kind", "", "workload kind: statefulset or deployment")
 	workloadName := flag.String("workload-name", "", "name of the StatefulSet or Deployment")
-	direction := flag.String("direction", "egress", "workload traffic direction: egress, ingress, or both")
-	follow := flag.Bool("follow", true, "follow workload scale, restart, and reschedule changes")
-	maxPods := flag.Uint("max-pods", 100, "maximum pods allowed for a workload target")
+	direction := flag.String("direction", effective.Direction, "workload traffic direction: egress, ingress, or both")
+	follow := flag.Bool("follow", effective.Follow, "follow workload scale, restart, and reschedule changes")
+	maxPods := flag.Uint("max-pods", effective.MaxPods, "maximum pods allowed for a workload target")
 	var logWorkloads stringList
 	flag.Var(&logWorkloads, "log-workload", "workload to capture logs from as namespace/statefulset|deployment/name; repeat for multiple workloads")
+	flag.Var(&logWorkloads, "workload", "workload to capture logs from as namespace/statefulset|deployment/name; repeat for multiple workloads")
 	var logContainers stringList
 	flag.Var(&logContainers, "log-container", "container name to capture for every log workload; repeat for multiple containers; empty captures all regular containers")
+	flag.Var(&logContainers, "container", "container name to capture for every log workload; repeat for multiple containers")
 	logSince := flag.Duration("log-since", 0, "include workload logs this far before start; 0 captures only new logs")
 	filter := flag.String("filter", "", "BPF capture filter")
-	snaplen := flag.Uint("snaplen", 4096, "packet snapshot length")
-	ttl := flag.Duration("ttl", 5*time.Minute, "capture session lifetime")
-	reorderWindow := flag.Duration("reorder-window", 300*time.Millisecond, "packet reorder window")
-	token := flag.String("token", os.Getenv("CAPMESH_TOKEN"), "shared bearer token")
-	insecureTransport := flag.Bool("insecure", false, "disable TLS (local development only)")
-	caFile := flag.String("tls-ca", "", "server CA certificate")
-	serverName := flag.String("tls-server-name", "", "TLS server name override")
+	snaplen := flag.Uint("snaplen", effective.Snaplen, "packet snapshot length")
+	ttl := flag.Duration("ttl", effective.TTL, "capture session lifetime")
+	reorderWindow := flag.Duration("reorder-window", effective.ReorderWindow, "packet reorder window")
+	token := flag.String("token", effective.Token, "shared bearer token")
+	tokenFile := flag.String("token-file", effective.TokenFile, "file containing the bearer token")
+	insecureTransport := flag.Bool("insecure", effective.Insecure, "disable TLS (local development only)")
+	caFile := flag.String("tls-ca", effective.TLSCA, "server CA certificate")
+	serverName := flag.String("tls-server-name", effective.TLSServerName, "TLS server name override")
+	_ = flag.String("config", configPathValue, "client config file")
+	_ = flag.String("context", effective.ContextName, "client config context")
 	flag.Parse()
+	if flag.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "Error: unexpected arguments: %s\n", strings.Join(flag.Args(), " "))
+		os.Exit(2)
+	}
+	visited := make(map[string]bool)
+	flag.Visit(func(item *flag.Flag) { visited[item.Name] = true })
+	if visited["token-file"] && !visited["token"] {
+		data, err := os.ReadFile(*tokenFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error: read token file:", err)
+			os.Exit(2)
+		}
+		*token = strings.TrimSpace(string(data))
+	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	controlModes := boolCount(*continuousStart, *continuousStop, *continuousStatus, *logStart, *logStop, *logStatus, *listAgents, *listSessions)
+	if !modernCommand {
+		fmt.Fprintln(os.Stderr, "Deprecated: legacy mode flags will be removed in a future release; run capmesh-client help for the command syntax.")
+	}
+	controlModes := boolCount(*continuousStart, *continuousStop, *continuousStatus, *logStart, *logStop, *logStatus, *listAgents, *listSessions, *listRecordings, *cleanRecordings, *createOnly, *getSessionID != "", *stopSessionID != "", *getAgentName != "", *getRecordingID != "")
 	if controlModes > 1 || (controlModes > 0 && (*create || *sessionID != "")) {
 		logger.Error("capture control, log control, list, --create, and --session modes are mutually exclusive")
 		os.Exit(2)
 	}
 	if !*create && *sessionID == "" && controlModes == 0 {
 		logger.Error("--session, --create, or a continuous capture control flag is required")
+		os.Exit(2)
+	}
+	if (*dryRun || *yes) && !*cleanRecordings {
+		logger.Error("--dry-run and --yes require --clean-recordings")
 		os.Exit(2)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -85,6 +164,54 @@ func main() {
 	defer connection.Close()
 	client := capmeshv1.NewCaptureServiceClient(connection)
 	authContext := grpcclient.AuthContext(ctx, *token)
+	if *getSessionID != "" {
+		session, err := client.GetSession(authContext, &capmeshv1.GetSessionRequest{SessionId: *getSessionID})
+		if err != nil {
+			logger.Error("get session failed", "error", err)
+			os.Exit(1)
+		}
+		printSessions(&capmeshv1.ListSessionsResponse{Sessions: []*capmeshv1.CaptureSession{session}})
+		return
+	}
+	if *stopSessionID != "" {
+		session, err := client.StopSession(authContext, &capmeshv1.StopSessionRequest{SessionId: *stopSessionID})
+		if err != nil {
+			logger.Error("stop session failed", "error", err)
+			os.Exit(1)
+		}
+		printSessions(&capmeshv1.ListSessionsResponse{Sessions: []*capmeshv1.CaptureSession{session}})
+		return
+	}
+	if *getAgentName != "" {
+		response, err := client.ListAgents(authContext, &capmeshv1.ListAgentsRequest{})
+		if err != nil {
+			logger.Error("list agents failed", "error", err)
+			os.Exit(1)
+		}
+		for _, agent := range response.GetAgents() {
+			if agent.GetNodeName() == *getAgentName {
+				printAgents(&capmeshv1.ListAgentsResponse{Agents: []*capmeshv1.AgentInfo{agent}})
+				return
+			}
+		}
+		logger.Error("agent not found", "node", *getAgentName)
+		os.Exit(1)
+	}
+	if *getRecordingID != "" {
+		response, err := client.ListSessionRecordings(authContext, &capmeshv1.ListSessionRecordingsRequest{})
+		if err != nil {
+			logger.Error("list session recordings failed", "error", err)
+			os.Exit(1)
+		}
+		for _, recording := range response.GetRecordings() {
+			if recording.GetSessionId() == *getRecordingID {
+				printSessionRecordings(&capmeshv1.ListSessionRecordingsResponse{Recordings: []*capmeshv1.SessionRecordingInfo{recording}, TotalSizeBytes: recording.GetSizeBytes(), ConfiguredMaxSizeBytes: response.GetConfiguredMaxSizeBytes()})
+				return
+			}
+		}
+		logger.Error("recording not found", "session_id", *getRecordingID)
+		os.Exit(1)
+	}
 	if *logStop {
 		capture, err := client.StopWorkloadLogCapture(authContext, &capmeshv1.StopWorkloadLogCaptureRequest{})
 		if err != nil {
@@ -139,6 +266,43 @@ func main() {
 		printSessions(response)
 		return
 	}
+	if *listRecordings {
+		response, err := client.ListSessionRecordings(authContext, &capmeshv1.ListSessionRecordingsRequest{})
+		if err != nil {
+			logger.Error("list session recordings failed", "error", err)
+			os.Exit(1)
+		}
+		printSessionRecordings(response)
+		return
+	}
+	if *cleanRecordings {
+		preview, err := client.CleanSessionRecordings(authContext, &capmeshv1.CleanSessionRecordingsRequest{DryRun: true})
+		if err != nil {
+			logger.Error("preview session recording cleanup failed", "error", err)
+			os.Exit(1)
+		}
+		printRecordingCleanup(preview)
+		if *dryRun || len(preview.GetDeleted()) == 0 {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "WARNING: cleanup permanently deletes %d session directories (%s).\n", len(preview.GetDeleted()), formatBytes(preview.GetDeletedSizeBytes()))
+		fmt.Fprintln(os.Stderr, "Back up every recording you need to keep before continuing.")
+		if !*yes && !confirmCleanup(os.Stdin, os.Stderr) {
+			fmt.Fprintln(os.Stderr, "Cleanup cancelled.")
+			return
+		}
+		response, err := client.CleanSessionRecordings(authContext, &capmeshv1.CleanSessionRecordingsRequest{})
+		if err != nil {
+			logger.Error("clean session recordings failed", "error", err)
+			os.Exit(1)
+		}
+		printRecordingCleanup(response)
+		if len(response.GetFailures()) > 0 || response.GetSizeAfterBytes() > response.GetTargetSizeBytes() {
+			logger.Error("recording cleanup did not reach the configured 50% target", "remaining", response.GetSizeAfterBytes(), "target", response.GetTargetSizeBytes(), "failures", len(response.GetFailures()))
+			os.Exit(1)
+		}
+		return
+	}
 	if *continuousStop {
 		capture, err := client.StopContinuousCapture(authContext, &capmeshv1.StopContinuousCaptureRequest{})
 		if err != nil {
@@ -172,7 +336,7 @@ func main() {
 		return
 	}
 	created := false
-	if *create {
+	if *create || *createOnly {
 		targets, workloadRequested, err := buildTargets(logicalInterfaces, *nodes, *workloadNamespace, *workloadKind, *workloadName, *direction, *follow, *maxPods)
 		if err != nil {
 			logger.Error("invalid capture target", "error", err)
@@ -187,10 +351,23 @@ func main() {
 		}
 		session, err := client.CreateSession(authContext, request)
 		if err != nil {
+			if status.Code(err) == codes.ResourceExhausted {
+				fmt.Fprintln(os.Stderr, "Cannot create a normal capture session because recording storage reached its configured limit.")
+				fmt.Fprintln(os.Stderr, status.Convert(err).Message())
+				fmt.Fprintln(os.Stderr, "WARNING: cleanup permanently deletes the oldest completed session directories.")
+				fmt.Fprintln(os.Stderr, "Back up recordings you need before running:")
+				fmt.Fprintln(os.Stderr, "  capmesh-client clean recordings --dry-run")
+				fmt.Fprintln(os.Stderr, "  capmesh-client clean recordings")
+				os.Exit(1)
+			}
 			logger.Error("create session failed", "error", err)
 			os.Exit(1)
 		}
 		*sessionID = session.GetId()
+		if *createOnly {
+			printSessions(&capmeshv1.ListSessionsResponse{Sessions: []*capmeshv1.CaptureSession{session}})
+			return
+		}
 		created = true
 		logger.Info("capture session created", "session_id", *sessionID)
 	}
@@ -260,6 +437,57 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("capture stream completed", "session_id", *sessionID, "packets_received", packetsReceived, "pcapng_blocks_written", packetsReceived)
+}
+
+func printSessionRecordings(response *capmeshv1.ListSessionRecordingsResponse) {
+	fmt.Printf("recordings=%d total_size=%s configured_max=%s\n", len(response.GetRecordings()), formatBytes(response.GetTotalSizeBytes()), formatBytes(response.GetConfiguredMaxSizeBytes()))
+	for _, item := range response.GetRecordings() {
+		fmt.Printf("session_id=%s directory=%q size=%s segments=%d created_at=%s finished_at=%s status=%s desired_state=%s active=%t deletable=%t\n",
+			item.GetSessionId(), item.GetDirectory(), formatBytes(item.GetSizeBytes()), item.GetSegmentCount(), formatTimestamp(item.GetCreatedAtNs()), formatTimestamp(item.GetFinishedAtNs()), item.GetStatus(), item.GetDesiredState(), item.GetActive(), item.GetDeletable())
+	}
+}
+
+func printRecordingCleanup(response *capmeshv1.CleanSessionRecordingsResponse) {
+	action := "cleanup"
+	if response.GetDryRun() {
+		action = "cleanup_preview"
+	}
+	fmt.Printf("%s deleted_directories=%d deleted_size=%s size_before=%s size_after=%s target=%s configured_max=%s failures=%d\n",
+		action, len(response.GetDeleted()), formatBytes(response.GetDeletedSizeBytes()), formatBytes(response.GetSizeBeforeBytes()), formatBytes(response.GetSizeAfterBytes()), formatBytes(response.GetTargetSizeBytes()), formatBytes(response.GetConfiguredMaxSizeBytes()), len(response.GetFailures()))
+	for _, item := range response.GetDeleted() {
+		fmt.Printf("delete session_id=%s directory=%q size=%s status=%s\n", item.GetSessionId(), item.GetDirectory(), formatBytes(item.GetSizeBytes()), item.GetStatus())
+	}
+	for _, failure := range response.GetFailures() {
+		fmt.Printf("failure session_id=%s directory=%q error=%q\n", failure.GetSessionId(), failure.GetDirectory(), failure.GetError())
+	}
+}
+
+func confirmCleanup(input io.Reader, output io.Writer) bool {
+	fmt.Fprint(output, "Continue? [y/N] ")
+	value, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "y" || value == "yes"
+}
+
+func formatBytes(value uint64) string {
+	const unit = uint64(1024)
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	divisor := unit
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	unitName := units[0]
+	for _, candidate := range units[1:] {
+		if value < divisor*unit {
+			break
+		}
+		divisor *= unit
+		unitName = candidate
+	}
+	return fmt.Sprintf("%.1f %s", float64(value)/float64(divisor), unitName)
 }
 
 func buildTargets(logicalInterfaces []string, nodes, namespace, kind, name, direction string, follow bool, maxPods uint) ([]*capmeshv1.CaptureTarget, bool, error) {

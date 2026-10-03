@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +26,7 @@ type Config struct {
 	Directory      string
 	SegmentSize    int64
 	MaxSessionSize int64
+	MaxNormalTotal int64
 	QueueSize      int
 	FlushInterval  time.Duration
 	SyncInterval   time.Duration
@@ -35,11 +38,26 @@ type Manager struct {
 	logger     *slog.Logger
 	metrics    *Metrics
 	mu         sync.Mutex
+	storageMu  sync.Mutex
 	active     map[string]*sessionRecorder
 	completed  map[string]domain.RecordingUsage
+	recovery   map[string]string
 	onComplete func(string, string, string)
 	closing    bool
 	wg         sync.WaitGroup
+}
+
+const (
+	desiredRunning = "RUNNING"
+	desiredStopped = "STOPPED"
+	recoveryFile   = "capture-recovery.json"
+)
+
+type recoveryMetadata struct {
+	SchemaVersion int            `json:"schema_version"`
+	DesiredState  string         `json:"desired_state"`
+	Generation    uint64         `json:"generation"`
+	Session       domain.Session `json:"session"`
 }
 
 type metadata struct {
@@ -116,7 +134,7 @@ func NewManager(config Config, packets ports.PacketPublisher, logger *slog.Logge
 	if config.Directory == "" {
 		return nil, errors.New("record directory is required")
 	}
-	if config.SegmentSize < 0 || config.MaxSessionSize < 0 {
+	if config.SegmentSize < 0 || config.MaxSessionSize < 0 || config.MaxNormalTotal < 0 {
 		return nil, errors.New("recording size limits must not be negative")
 	}
 	if config.QueueSize < 1 {
@@ -136,7 +154,68 @@ func NewManager(config Config, packets ports.PacketPublisher, logger *slog.Logge
 		logger = slog.Default()
 	}
 	config.Directory = root
-	return &Manager{config: config, packets: packets, logger: logger, metrics: metrics, active: make(map[string]*sessionRecorder), completed: make(map[string]domain.RecordingUsage)}, nil
+	return &Manager{config: config, packets: packets, logger: logger, metrics: metrics, active: make(map[string]*sessionRecorder), completed: make(map[string]domain.RecordingUsage), recovery: make(map[string]string)}, nil
+}
+
+// RecoverableSessions returns sessions whose persisted desired state is still
+// RUNNING. Runtime recorder status (for example PARTIAL after SIGTERM) is not
+// used because it describes files, not the user's intent.
+func (m *Manager) RecoverableSessions() ([]domain.Session, error) {
+	byID := make(map[string]recoveryMetadata)
+	var scanErr error
+	err := filepath.WalkDir(m.config.Directory, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			scanErr = errors.Join(scanErr, err)
+			return nil
+		}
+		if entry.IsDir() || (entry.Name() != recoveryFile && entry.Name() != recoveryFile+".part") {
+			return nil
+		}
+		canonicalPath := strings.TrimSuffix(path, ".part")
+		state, err := readRecovery(canonicalPath)
+		if err != nil {
+			scanErr = errors.Join(scanErr, fmt.Errorf("read %s: %w", canonicalPath, err))
+			return nil
+		}
+		if state.DesiredState != desiredRunning || state.Session.ID == "" {
+			return nil
+		}
+		if current, ok := byID[state.Session.ID]; !ok || state.Generation > current.Generation {
+			byID[state.Session.ID] = state
+			m.mu.Lock()
+			m.recovery[state.Session.ID] = canonicalPath
+			m.mu.Unlock()
+		}
+		return nil
+	})
+	if err != nil {
+		scanErr = errors.Join(scanErr, err)
+	}
+	sessions := make([]domain.Session, 0, len(byID))
+	for _, state := range byID {
+		sessions = append(sessions, state.Session.Clone())
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt.Before(sessions[j].CreatedAt) })
+	return sessions, scanErr
+}
+
+func (m *Manager) SetSessionDesiredState(sessionID, desired string) error {
+	if desired != desiredRunning && desired != desiredStopped {
+		return fmt.Errorf("invalid desired state %q", desired)
+	}
+	m.mu.Lock()
+	path := m.recovery[sessionID]
+	m.mu.Unlock()
+	if path == "" {
+		return ports.ErrNotFound
+	}
+	state, err := readRecovery(path)
+	if err != nil {
+		return err
+	}
+	state.DesiredState = desired
+	state.Generation++
+	return writeRecovery(path, state)
 }
 
 func (m *Manager) OnComplete(handler func(string, string, string)) {
@@ -198,7 +277,7 @@ func (m *Manager) Start(session domain.Session) error {
 			return fail(fmt.Errorf("create recording date directory: %w", err))
 		}
 		sessionDir = filepath.Join(dateDir, session.ID)
-		if err := os.Mkdir(sessionDir, 0o750); err != nil {
+		if err := os.MkdirAll(sessionDir, 0o750); err != nil {
 			return fail(fmt.Errorf("create recording session directory: %w", err))
 		}
 	}
@@ -236,11 +315,11 @@ func (m *Manager) Start(session domain.Session) error {
 		},
 	}
 	recorder.metadata.RunID = recorder.runID
+	if err := recorder.loadExistingSegments(); err != nil {
+		cancel()
+		return fail(err)
+	}
 	if rolling {
-		if err := recorder.loadRollingSegments(); err != nil {
-			cancel()
-			return fail(err)
-		}
 		if err := recorder.pruneOldest(m.config.SegmentSize); err != nil {
 			cancel()
 			return fail(err)
@@ -254,9 +333,21 @@ func (m *Manager) Start(session domain.Session) error {
 		cancel()
 		return fail(err)
 	}
+	recoveryPath := filepath.Join(sessionDir, recoveryFile)
+	state := recoveryMetadata{SchemaVersion: 1, DesiredState: desiredRunning, Generation: 1, Session: session.Clone()}
+	if previous, readErr := readRecovery(recoveryPath); readErr == nil {
+		state.Generation = previous.Generation + 1
+	}
+	state.Session.Status = domain.SessionRunning
+	if err := writeRecovery(recoveryPath, state); err != nil {
+		cancel()
+		_ = recorder.finishSegment(true)
+		return fail(fmt.Errorf("persist capture recovery state: %w", err))
+	}
 
 	m.mu.Lock()
 	m.active[session.ID] = recorder
+	m.recovery[session.ID] = recoveryPath
 	if rolling {
 		// The application exposes only the singleton's current or most recent run.
 		// Discard older usage snapshots so repeated restarts cannot grow this map.
@@ -279,8 +370,9 @@ func (m *Manager) Start(session domain.Session) error {
 			m.completed[session.ID] = usage
 		}
 		handler := m.onComplete
+		closing := m.closing
 		m.mu.Unlock()
-		if handler != nil {
+		if handler != nil && !closing {
 			handler(session.ID, recorder.finalStatus, recorder.finalError)
 		}
 	}()
@@ -585,28 +677,42 @@ func (r *sessionRecorder) segmentName(part, partial bool) string {
 	return name
 }
 
-func (r *sessionRecorder) loadRollingSegments() error {
+func (r *sessionRecorder) loadExistingSegments() error {
 	entries, err := os.ReadDir(r.sessionDir)
 	if err != nil {
-		return fmt.Errorf("scan continuous recording directory: %w", err)
+		return fmt.Errorf("scan recording directory: %w", err)
 	}
 	var segments []segmentMetadata
+	currentPrefix := "capture-"
+	if r.rolling {
+		currentPrefix = "trace-" + r.runID + "-"
+	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !entry.IsDir() && strings.HasPrefix(name, "trace-") && strings.HasSuffix(name, ".pcapng.part") {
+		isRecording := strings.HasPrefix(name, "capture-") || strings.HasPrefix(name, "trace-")
+		if !entry.IsDir() && isRecording && strings.HasSuffix(name, ".pcapng.part") {
 			if err := os.Remove(filepath.Join(r.sessionDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("remove stale continuous segment %s: %w", name, err)
+				return fmt.Errorf("remove stale recording segment %s: %w", name, err)
 			}
 			continue
 		}
-		if entry.IsDir() || !strings.HasPrefix(name, "trace-") || !strings.HasSuffix(name, ".pcapng") {
+		if entry.IsDir() || !isRecording || !strings.HasSuffix(name, ".pcapng") {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil {
-			return fmt.Errorf("stat continuous segment %s: %w", name, err)
+			return fmt.Errorf("stat recording segment %s: %w", name, err)
 		}
 		segments = append(segments, segmentMetadata{File: name, Size: info.Size(), StartedAt: info.ModTime().UTC(), FinishedAt: info.ModTime().UTC()})
+		if strings.HasPrefix(name, currentPrefix) {
+			remainder := strings.TrimPrefix(name, currentPrefix)
+			if dash := strings.IndexByte(remainder, '.'); dash >= 0 {
+				remainder = remainder[:dash]
+			}
+			if sequence, parseErr := strconv.Atoi(remainder); parseErr == nil && sequence > r.sequence {
+				r.sequence = sequence
+			}
+		}
 	}
 	sort.Slice(segments, func(i, j int) bool {
 		if segments[i].FinishedAt.Equal(segments[j].FinishedAt) {
@@ -622,6 +728,53 @@ func (r *sessionRecorder) loadRollingSegments() error {
 	r.retainedSize.Store(r.metadata.TotalFileSize)
 	r.segmentCount.Store(int64(len(segments)))
 	return nil
+}
+
+func readRecovery(path string) (recoveryMetadata, error) {
+	var best recoveryMetadata
+	found := false
+	var readErr error
+	for _, candidate := range []string{path, path + ".part"} {
+		data, err := os.ReadFile(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			readErr = errors.Join(readErr, err)
+			continue
+		}
+		var state recoveryMetadata
+		if err := json.Unmarshal(data, &state); err != nil {
+			readErr = errors.Join(readErr, fmt.Errorf("decode %s: %w", candidate, err))
+			continue
+		}
+		if !found || state.Generation > best.Generation {
+			best = state
+			found = true
+		}
+	}
+	if found {
+		return best, nil
+	}
+	if readErr != nil {
+		return recoveryMetadata{}, readErr
+	}
+	return recoveryMetadata{}, os.ErrNotExist
+}
+
+func writeRecovery(path string, state recoveryMetadata) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	part := path + ".part"
+	if err := os.WriteFile(part, append(data, '\n'), 0o640); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(part, path)
 }
 
 func (r *sessionRecorder) pruneOldest(reserve int64) error {

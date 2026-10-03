@@ -26,6 +26,11 @@ type CaptureServer struct {
 	continuous *appcontinuous.Service
 	agents     *AgentRegistry
 	logCapture *applogcapture.Service
+	recordings ports.SessionRecordingCatalog
+}
+
+func (s *CaptureServer) SetSessionRecordingCatalog(catalog ports.SessionRecordingCatalog) {
+	s.recordings = catalog
 }
 
 func (s *CaptureServer) SetContinuousCapture(service *appcontinuous.Service) {
@@ -151,6 +156,76 @@ func (s *CaptureServer) ListSessions(ctx context.Context, request *capmeshv1.Lis
 	return response, nil
 }
 
+func (s *CaptureServer) ListSessionRecordings(ctx context.Context, _ *capmeshv1.ListSessionRecordingsRequest) (*capmeshv1.ListSessionRecordingsResponse, error) {
+	if s.recordings == nil {
+		return nil, status.Error(codes.Unavailable, "server-side recording is not configured")
+	}
+	catalog, err := s.recordings.ListSessionRecordings(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	response := &capmeshv1.ListSessionRecordingsResponse{
+		TotalSizeBytes:         uint64(max(catalog.TotalSize, 0)),
+		ConfiguredMaxSizeBytes: uint64(max(catalog.ConfiguredMax, 0)),
+		Recordings:             make([]*capmeshv1.SessionRecordingInfo, 0, len(catalog.Recordings)),
+	}
+	for _, item := range catalog.Recordings {
+		response.Recordings = append(response.Recordings, sessionRecordingToProto(item))
+	}
+	return response, nil
+}
+
+func (s *CaptureServer) CleanSessionRecordings(ctx context.Context, request *capmeshv1.CleanSessionRecordingsRequest) (*capmeshv1.CleanSessionRecordingsResponse, error) {
+	if s.recordings == nil {
+		return nil, status.Error(codes.Unavailable, "server-side recording is not configured")
+	}
+	result, err := s.recordings.CleanSessionRecordings(ctx, request.GetDryRun())
+	if err != nil {
+		if errors.Is(err, ports.ErrUnavailable) {
+			return nil, rpcError(err)
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	response := &capmeshv1.CleanSessionRecordingsResponse{
+		ConfiguredMaxSizeBytes: uint64(max(result.ConfiguredMax, 0)),
+		TargetSizeBytes:        uint64(max(result.TargetSize, 0)),
+		SizeBeforeBytes:        uint64(max(result.SizeBefore, 0)),
+		SizeAfterBytes:         uint64(max(result.SizeAfter, 0)),
+		DeletedSizeBytes:       uint64(max(result.DeletedSize, 0)),
+		DryRun:                 result.DryRun,
+		Deleted:                make([]*capmeshv1.SessionRecordingInfo, 0, len(result.Deleted)),
+		Failures:               make([]*capmeshv1.RecordingCleanupFailure, 0, len(result.Failures)),
+	}
+	for _, item := range result.Deleted {
+		response.Deleted = append(response.Deleted, sessionRecordingToProto(item))
+	}
+	for _, failure := range result.Failures {
+		response.Failures = append(response.Failures, &capmeshv1.RecordingCleanupFailure{SessionId: failure.SessionID, Directory: failure.Directory, Error: failure.Error})
+	}
+	s.logger.Info("normal session recording cleanup completed", "dry_run", result.DryRun, "size_before", result.SizeBefore, "size_after", result.SizeAfter, "deleted_bytes", result.DeletedSize, "deleted_directories", len(result.Deleted), "failures", len(result.Failures))
+	return response, nil
+}
+
+func sessionRecordingToProto(item domain.SessionRecordingInfo) *capmeshv1.SessionRecordingInfo {
+	result := &capmeshv1.SessionRecordingInfo{
+		SessionId:    item.SessionID,
+		Directory:    item.Directory,
+		SizeBytes:    uint64(max(item.SizeBytes, 0)),
+		SegmentCount: uint32(item.SegmentCount),
+		Status:       item.Status,
+		DesiredState: item.DesiredState,
+		Active:       item.Active,
+		Deletable:    item.Deletable,
+	}
+	if !item.CreatedAt.IsZero() {
+		result.CreatedAtNs = item.CreatedAt.UnixNano()
+	}
+	if !item.FinishedAt.IsZero() {
+		result.FinishedAtNs = item.FinishedAt.UnixNano()
+	}
+	return result
+}
+
 func (s *CaptureServer) StartWorkloadLogCapture(ctx context.Context, request *capmeshv1.StartWorkloadLogCaptureRequest) (*capmeshv1.WorkloadLogCapture, error) {
 	if s.logCapture == nil {
 		return nil, status.Error(codes.Unavailable, "workload log capture is not configured")
@@ -213,6 +288,11 @@ func workloadLogCaptureToProto(capture applogcapture.Capture) *capmeshv1.Workloa
 }
 
 func rpcError(err error) error {
+	var capacityErr *ports.RecordingCapacityExceededError
+	if errors.As(err, &capacityErr) {
+		capacity := capacityErr.Capacity
+		return status.Errorf(codes.ResourceExhausted, "normal recording storage limit reached: used=%d max=%d deletable_bytes=%d deletable_sessions=%d; back up recordings you need, then run capmesh-client clean recordings --dry-run and capmesh-client clean recordings", capacity.UsedSize, capacity.MaxSize, capacity.DeletableSize, capacity.DeletableSessions)
+	}
 	switch {
 	case errors.Is(err, ports.ErrNotFound):
 		return status.Error(codes.NotFound, err.Error())

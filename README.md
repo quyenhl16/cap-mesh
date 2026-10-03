@@ -14,7 +14,7 @@ Repository này cung cấp ba chương trình:
 - `capmesh-server`: quản lý session in-memory, kiểm tra sequence gap, reorder bằng min-heap, TTL tự dừng, fan-out queue độc lập cho từng subscriber và Prometheus metrics.
 - `capmesh-client`: tạo hoặc subscribe session, ánh xạ `node/interface` sang PCAPNG Interface ID và chỉ ghi binary PCAPNG ra `stdout`.
 
-TLS 1.2+ và bearer token theo vai trò được hỗ trợ. Chế độ `--insecure` chỉ dành cho phát triển local. Session mất khi server restart và server chỉ chạy một replica, đúng phạm vi MVP.
+TLS 1.2+ và bearer token theo vai trò được hỗ trợ. Chế độ `--insecure` chỉ dành cho phát triển local. Khi recording được bật, server lưu recovery metadata trên volume và tự dựng lại session còn ở desired state `RUNNING` sau khi pod khởi động lại. Server vẫn chạy một replica.
 
 ## Kiến trúc code
 
@@ -69,7 +69,8 @@ go run ./cmd/capmesh-server \
   --token dev-secret \
   --record-dir ./data/captures \
   --record-segment-size 10MiB \
-  --record-max-session-size 10GiB
+  --record-max-session-size 10GiB \
+  --record-max-normal-total-size 50GiB
 ```
 
 Khi `--record-dir` được cấu hình, server vừa stream packet cho các client vừa ghi
@@ -78,6 +79,12 @@ File đang ghi có đuôi `.part`; khi đạt giới hạn segment hoặc sessio
 được flush và đổi tên thành `capture-000001.pcapng`, `capture-000002.pcapng`, ...
 `metadata.json` chứa trạng thái, tổng packet/byte và danh sách segment. Để trống
 `--record-dir` sẽ tắt chức năng ghi file.
+
+Tổng dung lượng thư mục của các normal session được giới hạn bởi
+`--record-max-normal-total-size`. Khi đạt giới hạn, server từ chối tạo normal
+session mới và yêu cầu backup rồi chạy `capmesh-client clean recordings`.
+Cleanup xóa nguyên thư mục session cũ nhất cho tới khi còn tối đa 50% giới hạn.
+Xem [hướng dẫn quản lý normal recording](docs/normal-recording-cleanup.md).
 
 Terminal 2 — agent (đổi `eth0` thành interface thật):
 
@@ -93,9 +100,8 @@ go run ./cmd/capmesh-agent \
 Terminal 3 — tạo session và xem ngay bằng Wireshark:
 
 ```bash
-go run ./cmd/capmesh-client \
+go run ./cmd/capmesh-client capture session \
   --server 127.0.0.1:18443 \
-  --create \
   --nodes worker-local \
   --interface management \
   --filter "tcp port 443" \
@@ -109,11 +115,78 @@ go run ./cmd/capmesh-client \
 Có thể ghi file thay vì mở Wireshark:
 
 ```bash
-capmesh-client --server 127.0.0.1:18443 --session SESSION_ID --token dev-secret --insecure > capture.pcapng
+capmesh-client stream session SESSION_ID --server 127.0.0.1:18443 --token dev-secret --insecure > capture.pcapng
 tshark -r capture.pcapng
 ```
 
 Mọi log của client đi tới `stderr`; `stdout` chỉ chứa PCAPNG.
+
+## Client command và context config
+
+Client hỗ trợ cú pháp `verb resource` và tiếp tục nhận các mode flag cũ trong
+giai đoạn chuyển đổi:
+
+```bash
+capmesh-client get sessions
+capmesh-client describe session SESSION_ID
+capmesh-client get agents
+capmesh-client get recordings
+capmesh-client create session --nodes worker-01 --interface management
+capmesh-client capture session --nodes worker-01 --interface management > capture.pcapng
+capmesh-client stream session SESSION_ID > capture.pcapng
+capmesh-client start continuous --interface management
+capmesh-client stop continuous
+capmesh-client start logcapture --workload default/deployment/api
+capmesh-client stop logcapture
+capmesh-client clean recordings --dry-run
+```
+
+Thông tin kết nối được đọc mặc định từ `config.yaml` trong
+`os.UserConfigDir()/capmesh`. Flag trên command line override environment;
+environment override context hiện tại. Tên trường YAML giữ cùng thuật ngữ với
+flag, ví dụ `tlsCA` tương ứng `--tls-ca` và `reorderWindow` tương ứng
+`--reorder-window`.
+
+```yaml
+apiVersion: capmesh.io/v1
+kind: ClientConfig
+currentContext: production
+contexts:
+  production:
+    server: capmesh.example.com:18443
+    tlsCA: /etc/capmesh/ca.crt
+    tlsServerName: capmesh-server
+    tokenFile: /etc/capmesh/token
+    defaults:
+      snaplen: 4096
+      ttl: 5m
+      reorderWindow: 300ms
+      direction: egress
+      follow: true
+      maxPods: 100
+```
+
+Quản lý context bằng các lệnh:
+
+```bash
+capmesh-client config view
+capmesh-client config view --effective
+capmesh-client config get-contexts
+capmesh-client config set-context production --server capmesh.example.com:18443 \
+  --tls-ca /etc/capmesh/ca.crt --tls-server-name capmesh-server \
+  --token-file /etc/capmesh/token
+capmesh-client config use-context production
+```
+
+`deploy/generate.sh` sinh CA/server certificate, tạo client config và cài
+`config.yaml` cùng `ca.crt` vào thư mục config của user. Nếu config đã tồn tại,
+script backup trước khi ghi file mới:
+
+```bash
+bash ./deploy/generate.sh --server capmesh.example.com:18443 --context production
+```
+
+`deploy/generate-certs.sh` vẫn hoạt động như wrapper deprecated.
 
 ## TLS
 
@@ -122,9 +195,8 @@ Server nhận `--tls-cert` và `--tls-key`. Agent/client dùng trust store hệ 
 ```bash
 capmesh-server --tls-cert server.crt --tls-key server.key --token "$CAPMESH_TOKEN"
 capmesh-agent --server capture.example.com:18443 --tls-ca ca.crt --interface management=eth0
-capmesh-client \
+capmesh-client stream session SESSION_ID \
   --server capture.example.com:18443 \
-  --session SESSION_ID \
   --tls-ca ./ca.crt \
   --tls-server-name capture.example.com \
   --token "$CAPMESH_TOKEN" \
@@ -139,12 +211,11 @@ trong khi certificate có DNS SAN là `capmesh-server`:
 ```bash
 export CAPMESH_TOKEN='replace-me'
 
-./bin/capmesh-client \
+./bin/capmesh-client capture session \
   --server 10.106.142.184:18443 \
   --tls-ca ./ca.crt \
   --tls-server-name capmesh-server \
   --token "$CAPMESH_TOKEN" \
-  --create \
   --namespace pramf01 \
   --workload-kind statefulset \
   --workload-name mm \
@@ -162,12 +233,11 @@ không truyền `--tls-server-name`, certificate phải chứa chính IP đó tr
 Liệt kê các agent đang kết nối, node và toàn bộ ánh xạ alias/interface:
 
 ```bash
-./bin/capmesh-client \
+./bin/capmesh-client get agents \
   --server 10.106.142.184:18443 \
   --tls-ca ./ca.crt \
   --tls-server-name capmesh-server \
-  --token "$CAPMESH_TOKEN" \
-  --list-agents
+  --token "$CAPMESH_TOKEN"
 ```
 
 Ví dụ output:
@@ -183,12 +253,11 @@ sẽ được loại khỏi kết quả. Viewer, admin và shared token đều c
 Liệt kê các session thông thường đang chạy:
 
 ```bash
-./bin/capmesh-client \
+./bin/capmesh-client get sessions \
   --server 10.106.142.184:18443 \
   --tls-ca ./ca.crt \
   --tls-server-name capmesh-server \
-  --token "$CAPMESH_TOKEN" \
-  --list-sessions
+  --token "$CAPMESH_TOKEN"
 ```
 
 Ví dụ output:
@@ -212,23 +281,22 @@ thể thoát; job chỉ dừng khi gọi `--log-stop` hoặc server shutdown. Si
 ```bash
 export CAPMESH_TOKEN='replace-me'
 
-./bin/capmesh-client \
+./bin/capmesh-client start logcapture \
   --server 10.106.142.184:18443 \
   --tls-ca ./ca.crt \
   --tls-server-name capmesh-server \
   --token "$CAPMESH_TOKEN" \
-  --log-start \
-  --log-workload pramf01/statefulset/mm \
-  --log-workload pramf01/deployment/api \
-  --log-container app \
+  --workload pramf01/statefulset/mm \
+  --workload pramf01/deployment/api \
+  --container app \
   --log-since 5m \
   --max-pods 100
 
-./bin/capmesh-client --server 10.106.142.184:18443 --tls-ca ./ca.crt \
-  --tls-server-name capmesh-server --token "$CAPMESH_TOKEN" --log-status
+./bin/capmesh-client get logcapture --server 10.106.142.184:18443 --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server --token "$CAPMESH_TOKEN"
 
-./bin/capmesh-client --server 10.106.142.184:18443 --tls-ca ./ca.crt \
-  --tls-server-name capmesh-server --token "$CAPMESH_TOKEN" --log-stop
+./bin/capmesh-client stop logcapture --server 10.106.142.184:18443 --tls-ca ./ca.crt \
+  --tls-server-name capmesh-server --token "$CAPMESH_TOKEN"
 ```
 
 Bỏ `--log-container` để lấy mọi application container. `--log-since 0` chỉ lấy
@@ -324,6 +392,7 @@ data:
   CAPMESH_RECORD_DIR: /app/captures
   CAPMESH_RECORD_SEGMENT_SIZE: 10MiB
   CAPMESH_RECORD_MAX_SESSION_SIZE: 10GiB
+  CAPMESH_RECORD_MAX_NORMAL_TOTAL_SIZE: 50GiB
   CAPMESH_RECORD_QUEUE_SIZE: "65536"
 
 # Server container/pod
@@ -349,6 +418,7 @@ cho scheduling/binding, còn dung lượng thực phụ thuộc ổ đĩa của 
 | Server | `--record-dir` | Rỗng, recording bị tắt |
 | Server | `--record-segment-size` | `10MiB`; `0` để không chia segment |
 | Server | `--record-max-session-size` | `10GiB`; `0` để không giới hạn tổng mỗi session |
+| Server | `--record-max-normal-total-size` | `50GiB`; tổng quota thư mục normal session, `0` để tắt quota và cleanup |
 | Server | `--record-queue-size` | `65536` packet mỗi session |
 | Agent | `--interface alias=physical` | Bắt buộc ít nhất một ánh xạ, lặp lại tối đa 10 lần |
 | Agent | batch packet / delay | `64` / `10ms` (MVP cố định) |
@@ -376,7 +446,7 @@ cho các lệnh start/status/stop, cách stream song song và layout file.
 
 ## Giới hạn MVP
 
-- State chỉ ở memory, không HA; continuous capture có retention theo file nhưng chưa hỗ trợ replay packet cũ qua API.
+- Runtime state vẫn ở memory, nhưng session đang có `desired_state=RUNNING`, continuous capture và workload-log capture được dựng lại từ recovery metadata khi server pod khởi động lại. Packet phát sinh trong thời gian server unavailable vẫn có thể mất vì agent chưa có acknowledged replay buffer.
 - Đồng hồ worker phải đồng bộ bằng NTP/Chrony; reorder không sửa clock skew.
 - BPF được truyền dưới dạng một argument riêng, không qua shell; `dumpcap` trên agent là nơi compile và từ chối filter không hợp lệ.
 - Capture drop do kernel/`dumpcap` chưa được parse từ thống kê cuối phiên; metric được đăng ký nhưng chỉ tăng khi adapter capture bổ sung nguồn thống kê tương ứng.

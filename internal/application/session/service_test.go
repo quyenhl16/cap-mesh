@@ -39,6 +39,47 @@ func (f *fakeRecorder) Start(domain.Session) error {
 	return f.err
 }
 
+type fakeRecoveryRecorder struct {
+	started []domain.Session
+	states  map[string]string
+}
+
+type fakeCapacityRecorder struct {
+	started  bool
+	checkErr error
+}
+
+func (f *fakeCapacityRecorder) Start(domain.Session) error                     { f.started = true; return nil }
+func (f *fakeCapacityRecorder) RecoverableSessions() ([]domain.Session, error) { return nil, nil }
+func (f *fakeCapacityRecorder) SetSessionDesiredState(string, string) error    { return nil }
+func (f *fakeCapacityRecorder) ListSessionRecordings(context.Context) (domain.SessionRecordingCatalog, error) {
+	return domain.SessionRecordingCatalog{}, nil
+}
+func (f *fakeCapacityRecorder) CleanSessionRecordings(context.Context, bool) (domain.RecordingCleanupResult, error) {
+	return domain.RecordingCleanupResult{}, nil
+}
+func (f *fakeCapacityRecorder) CheckNormalRecordingCapacity(context.Context) error {
+	return f.checkErr
+}
+
+func (f *fakeRecoveryRecorder) Start(session domain.Session) error {
+	f.started = append(f.started, session)
+	if f.states == nil {
+		f.states = make(map[string]string)
+	}
+	f.states[session.ID] = "RUNNING"
+	return nil
+}
+
+func (f *fakeRecoveryRecorder) RecoverableSessions() ([]domain.Session, error) { return nil, nil }
+func (f *fakeRecoveryRecorder) SetSessionDesiredState(id, desired string) error {
+	if f.states == nil {
+		f.states = make(map[string]string)
+	}
+	f.states[id] = desired
+	return nil
+}
+
 type fakePackets struct {
 	opened bool
 	closed bool
@@ -80,6 +121,57 @@ func TestCreateAndStopSession(t *testing.T) {
 	}
 	if session.Status != domain.SessionStopped || !packets.closed {
 		t.Fatalf("unexpected stop result: %#v", session)
+	}
+}
+
+func TestCreateNormalSessionChecksRecordingCapacityButContinuousDoesNot(t *testing.T) {
+	capacityErr := &ports.RecordingCapacityExceededError{Capacity: domain.RecordingCapacity{UsedSize: 100, MaxSize: 100}}
+	recorder := &fakeCapacityRecorder{checkErr: capacityErr}
+	agents := &fakeAgents{nodes: []string{"worker-1"}}
+	service := NewService(memory.NewSessionRepository(), agents, &fakePackets{}, recorder, 100)
+	input := CreateInput{LogicalInterface: "management", Snaplen: 256, TTL: time.Minute}
+	if _, err := service.Create(context.Background(), input); !errors.Is(err, capacityErr) {
+		t.Fatalf("normal session error = %v", err)
+	}
+	if recorder.started || len(agents.commands) != 0 {
+		t.Fatalf("capacity rejection had side effects: started=%v commands=%#v", recorder.started, agents.commands)
+	}
+	input.Continuous = true
+	if _, err := service.Create(context.Background(), input); err != nil {
+		t.Fatalf("continuous session was blocked by normal quota: %v", err)
+	}
+	if !recorder.started {
+		t.Fatal("continuous recorder was not started")
+	}
+}
+
+func TestRestoreWaitsForAgentThenReplaysCaptureCommand(t *testing.T) {
+	agents := &fakeAgents{}
+	packets := &fakePackets{}
+	recorder := &fakeRecoveryRecorder{}
+	service := NewService(memory.NewSessionRepository(), agents, packets, recorder, 100)
+	persisted := domain.Session{
+		ID: "restored-session", Mode: domain.SessionModeContinuous, Status: domain.SessionRunning,
+		Snaplen: 512, CreatedAt: time.Now().UTC(), ReorderWindow: 10 * time.Millisecond,
+		Targets: []domain.CaptureTarget{{ID: "management", Interface: &domain.InterfaceTarget{Nodes: []string{"worker-1"}, LogicalInterface: "management"}}},
+	}
+	restored, err := service.Restore(context.Background(), persisted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != domain.SessionRunning || len(agents.commands) != 0 {
+		t.Fatalf("unexpected restore result: %#v commands=%#v", restored, agents.commands)
+	}
+	agents.nodes = []string{"worker-1"}
+	service.AgentConnected(context.Background(), "worker-1")
+	if len(agents.commands) != 1 || agents.commands[0].Kind != "start" || agents.commands[0].SessionID != persisted.ID {
+		t.Fatalf("capture command was not replayed: %#v", agents.commands)
+	}
+	if _, err := service.Stop(context.Background(), persisted.ID); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.states[persisted.ID] != "STOPPED" {
+		t.Fatalf("desired state = %q, want STOPPED", recorder.states[persisted.ID])
 	}
 }
 

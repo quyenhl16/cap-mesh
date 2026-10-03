@@ -28,6 +28,7 @@ import (
 	applogcapture "github.com/quyenhl16/cap-mesh/internal/application/logcapture"
 	appsession "github.com/quyenhl16/cap-mesh/internal/application/session"
 	appstream "github.com/quyenhl16/cap-mesh/internal/application/stream"
+	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -46,19 +47,21 @@ func main() {
 	recordDirectory := flag.String("record-dir", "", "directory for server-side PCAPNG recordings; empty disables recording")
 	recordSegmentSize := flag.String("record-segment-size", "10MiB", "maximum size of each PCAPNG segment; 0 disables rotation")
 	recordMaxSessionSize := flag.String("record-max-session-size", "10GiB", "maximum total recording size per session; 0 means unlimited")
+	recordMaxNormalTotal := flag.String("record-max-normal-total-size", "50GiB", "maximum total size of normal session recording directories; 0 disables the limit")
 	recordQueueSize := flag.Int("record-queue-size", 65536, "packet queue size for each session recorder")
 	workloadReconcileInterval := flag.Duration("workload-reconcile-interval", 5*time.Second, "interval for reconciling workload pods and Calico endpoints")
 	if err := envconfig.Apply(flag.CommandLine, map[string]string{
-		"CAPMESH_SERVER_LISTEN":               "listen",
-		"CAPMESH_SERVER_METRICS_LISTEN":       "metrics-listen",
-		"CAPMESH_TLS_CERT":                    "tls-cert",
-		"CAPMESH_TLS_KEY":                     "tls-key",
-		"CAPMESH_SUBSCRIBER_QUEUE_SIZE":       "subscriber-queue-size",
-		"CAPMESH_RECORD_DIR":                  "record-dir",
-		"CAPMESH_RECORD_SEGMENT_SIZE":         "record-segment-size",
-		"CAPMESH_RECORD_MAX_SESSION_SIZE":     "record-max-session-size",
-		"CAPMESH_RECORD_QUEUE_SIZE":           "record-queue-size",
-		"CAPMESH_WORKLOAD_RECONCILE_INTERVAL": "workload-reconcile-interval",
+		"CAPMESH_SERVER_LISTEN":                "listen",
+		"CAPMESH_SERVER_METRICS_LISTEN":        "metrics-listen",
+		"CAPMESH_TLS_CERT":                     "tls-cert",
+		"CAPMESH_TLS_KEY":                      "tls-key",
+		"CAPMESH_SUBSCRIBER_QUEUE_SIZE":        "subscriber-queue-size",
+		"CAPMESH_RECORD_DIR":                   "record-dir",
+		"CAPMESH_RECORD_SEGMENT_SIZE":          "record-segment-size",
+		"CAPMESH_RECORD_MAX_SESSION_SIZE":      "record-max-session-size",
+		"CAPMESH_RECORD_MAX_NORMAL_TOTAL_SIZE": "record-max-normal-total-size",
+		"CAPMESH_RECORD_QUEUE_SIZE":            "record-queue-size",
+		"CAPMESH_WORKLOAD_RECONCILE_INTERVAL":  "workload-reconcile-interval",
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -66,7 +69,7 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	var segmentSize, maxSessionSize int64
+	var segmentSize, maxSessionSize, maxNormalTotal int64
 	var err error
 	if *recordDirectory != "" {
 		segmentSize, err = recording.ParseSize(*recordSegmentSize)
@@ -77,6 +80,11 @@ func main() {
 		maxSessionSize, err = recording.ParseSize(*recordMaxSessionSize)
 		if err != nil {
 			logger.Error("invalid --record-max-session-size", "error", err)
+			os.Exit(2)
+		}
+		maxNormalTotal, err = recording.ParseSize(*recordMaxNormalTotal)
+		if err != nil {
+			logger.Error("invalid --record-max-normal-total-size", "error", err)
 			os.Exit(2)
 		}
 		if *recordQueueSize < 1 {
@@ -100,13 +108,13 @@ func main() {
 	var recorderManager *recording.Manager
 	if *recordDirectory != "" {
 		recordingMetrics := recording.NewMetrics(registry)
-		recorderManager, err = recording.NewManager(recording.Config{Directory: *recordDirectory, SegmentSize: segmentSize, MaxSessionSize: maxSessionSize, QueueSize: *recordQueueSize, FlushInterval: time.Second, SyncInterval: 10 * time.Second}, packetService, logger, recordingMetrics)
+		recorderManager, err = recording.NewManager(recording.Config{Directory: *recordDirectory, SegmentSize: segmentSize, MaxSessionSize: maxSessionSize, MaxNormalTotal: maxNormalTotal, QueueSize: *recordQueueSize, FlushInterval: time.Second, SyncInterval: 10 * time.Second}, packetService, logger, recordingMetrics)
 		if err != nil {
 			logger.Error("initialize capture recording failed", "error", err)
 			os.Exit(1)
 		}
 		captureRecorder = recorderManager
-		logger.Info("server-side capture recording enabled", "directory", *recordDirectory, "segment_size", segmentSize, "max_session_size", maxSessionSize, "queue_size", *recordQueueSize)
+		logger.Info("server-side capture recording enabled", "directory", *recordDirectory, "segment_size", segmentSize, "max_session_size", maxSessionSize, "max_normal_total_size", maxNormalTotal, "queue_size", *recordQueueSize)
 	}
 	sessions := appsession.NewService(memory.NewSessionRepository(), agents, packetService, captureRecorder, *subscriberQueue)
 	if *workloadReconcileInterval <= 0 {
@@ -120,16 +128,64 @@ func main() {
 		recorderManager.OnComplete(continuousCapture.RecordingCompleted)
 	}
 	var workloadLogCapture *applogcapture.Service
+	var logFactory *logrecording.Factory
 	if *recordDirectory != "" {
 		logMetrics := logrecording.NewMetrics(registry)
-		logFactory, factoryErr := logrecording.NewFactory(logrecording.Config{Directory: *recordDirectory, SegmentSize: segmentSize, MaxRetainedSize: maxSessionSize, SyncInterval: 10 * time.Second}, logger, logMetrics)
+		var factoryErr error
+		logFactory, factoryErr = logrecording.NewFactory(logrecording.Config{Directory: *recordDirectory, SegmentSize: segmentSize, MaxRetainedSize: maxSessionSize, SyncInterval: 10 * time.Second}, logger, logMetrics)
 		if factoryErr != nil {
 			logger.Error("initialize workload log recording failed", "error", factoryErr)
 			os.Exit(1)
 		}
 		workloadLogCapture = applogcapture.NewService(workloadResolver, logFactory, applogcapture.Config{ReconcileInterval: *workloadReconcileInterval, QueueSize: *recordQueueSize, SegmentSize: segmentSize, MaxRetainedSize: maxSessionSize}, logger, logMetrics)
 	}
+	if recorderManager != nil {
+		recoverable, recoveryErr := recorderManager.RecoverableSessions()
+		if recoveryErr != nil {
+			logger.Error("scan capture recovery metadata failed", "error", recoveryErr)
+		}
+		for _, persisted := range recoverable {
+			restored, restoreErr := sessions.Restore(context.Background(), persisted)
+			if restoreErr != nil {
+				logger.Error("restore capture session failed", "session_id", persisted.ID, "error", restoreErr)
+				continue
+			}
+			if restored.Mode == domain.SessionModeContinuous {
+				if restoreErr := continuousCapture.Restore(restored); restoreErr != nil {
+					logger.Error("restore continuous capture state failed", "session_id", restored.ID, "error", restoreErr)
+					continue
+				}
+			}
+			logger.Info("capture session restored", "session_id", restored.ID, "mode", restored.Mode)
+		}
+	}
+	if logFactory != nil && workloadLogCapture != nil {
+		runs, recoveryErr := logFactory.RecoverableRuns()
+		if recoveryErr != nil {
+			logger.Error("scan workload log recovery metadata failed", "error", recoveryErr)
+		}
+		if len(runs) > 0 {
+			if restored, restoreErr := workloadLogCapture.Restore(context.Background(), runs[0]); restoreErr != nil {
+				logger.Error("restore workload log capture failed", "run_id", runs[0].RunID, "error", restoreErr)
+			} else {
+				logger.Info("workload log capture restored", "run_id", restored.RunID)
+			}
+			for _, stale := range runs[1:] {
+				if err := logFactory.SetRunDesiredState(stale.RunID, "STOPPED"); err != nil {
+					logger.Error("disable stale workload log recovery state failed", "run_id", stale.RunID, "error", err)
+				}
+			}
+		}
+	}
+	agents.OnConnect(func(node string) {
+		logger.Info("reconciling sessions after agent connect", "node", node)
+		sessions.AgentConnected(context.Background(), node)
+	})
 	agents.OnDisconnect(func(node string) {
+		if ctx.Err() != nil {
+			logger.Info("ignoring agent disconnect during server shutdown", "node", node)
+			return
+		}
 		logger.Warn("marking sessions after agent disconnect", "node", node)
 		sessions.AgentDisconnected(context.Background(), node)
 	})
@@ -161,6 +217,9 @@ func main() {
 	captureServer.SetContinuousCapture(continuousCapture)
 	captureServer.SetAgentRegistry(agents)
 	captureServer.SetWorkloadLogCapture(workloadLogCapture)
+	if recorderManager != nil {
+		captureServer.SetSessionRecordingCatalog(recorderManager)
+	}
 	capmeshv1.RegisterCaptureServiceServer(grpcServer, captureServer)
 
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}

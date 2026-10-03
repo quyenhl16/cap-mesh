@@ -79,6 +79,13 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 	if err := validate(input); err != nil {
 		return domain.Session{}, err
 	}
+	if !input.Continuous {
+		if catalog, ok := s.recorder.(ports.SessionRecordingCatalog); ok {
+			if err := catalog.CheckNormalRecordingCapacity(ctx); err != nil {
+				return domain.Session{}, err
+			}
+		}
+	}
 
 	connected := s.agents.ConnectedNodes()
 	sources, err := s.resolveInitialSources(ctx, targets, connected)
@@ -140,6 +147,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 	}
 	hasFollower := hasFollowingWorkload(targets)
 	if started == 0 && !hasFollower {
+		_ = s.setDesiredState(session.ID, "STOPPED")
 		cancel()
 		s.removeRuntime(session.ID)
 		_ = session.Transition(domain.SessionFailed)
@@ -158,6 +166,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 		}
 	}
 	if err := s.repository.Update(ctx, session); err != nil {
+		_ = s.setDesiredState(session.ID, "STOPPED")
 		cancel()
 		s.removeRuntime(session.ID)
 		return domain.Session{}, err
@@ -173,6 +182,58 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (domain.Session
 	return session, nil
 }
 
+// Restore rebuilds the in-memory pipeline for a session whose persisted desired
+// state is RUNNING. Agents may not have reconnected yet, so source commands are
+// reconciled again from AgentConnected.
+func (s *Service) Restore(ctx context.Context, persisted domain.Session) (domain.Session, error) {
+	if persisted.ID == "" || len(persisted.Targets) == 0 || persisted.Snaplen == 0 {
+		return domain.Session{}, errors.New("invalid persisted session")
+	}
+	now := s.now()
+	if persisted.Mode != domain.SessionModeContinuous && !persisted.ExpiresAt.IsZero() && !persisted.ExpiresAt.After(now) {
+		_ = s.setDesiredState(persisted.ID, "STOPPED")
+		return domain.Session{}, fmt.Errorf("session %s expired while server was unavailable", persisted.ID)
+	}
+	persisted.Status = domain.SessionStarting
+	persisted.Message = "recovering after server restart"
+	if err := s.repository.Create(ctx, persisted); err != nil {
+		return domain.Session{}, err
+	}
+	if err := s.packets.OpenSession(persisted.ID, persisted.ReorderWindow, s.subscriberSize); err != nil {
+		return domain.Session{}, err
+	}
+	if s.recorder != nil {
+		if err := s.recorder.Start(persisted); err != nil {
+			s.packets.CloseSession(persisted.ID)
+			_ = persisted.Transition(domain.SessionFailed)
+			persisted.Message = "restore recorder: " + err.Error()
+			_ = s.repository.Update(ctx, persisted)
+			return domain.Session{}, fmt.Errorf("restore recorder: %w", err)
+		}
+	}
+	runtimeCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.runtime[persisted.ID] = &runtimeSession{cancel: cancel, sources: make(map[string]domain.CaptureSource)}
+	s.mu.Unlock()
+	_ = persisted.Transition(domain.SessionRunning)
+	if err := s.repository.Update(ctx, persisted); err != nil {
+		cancel()
+		s.removeRuntime(persisted.ID)
+		return domain.Session{}, err
+	}
+	s.reconcileRecovered(ctx, persisted.ID)
+	if hasFollowingWorkload(persisted.Targets) {
+		go s.reconcileLoop(runtimeCtx, persisted.ID)
+	}
+	if persisted.Mode != domain.SessionModeContinuous && !persisted.ExpiresAt.IsZero() {
+		remaining := persisted.ExpiresAt.Sub(now)
+		if remaining > 0 {
+			time.AfterFunc(remaining, func() { _, _ = s.Stop(context.Background(), persisted.ID) })
+		}
+	}
+	return s.repository.Get(ctx, persisted.ID)
+}
+
 func (s *Service) Stop(ctx context.Context, id string) (domain.Session, error) {
 	session, err := s.repository.Get(ctx, id)
 	if err != nil {
@@ -180,6 +241,9 @@ func (s *Service) Stop(ctx context.Context, id string) (domain.Session, error) {
 	}
 	if session.Status == domain.SessionStopped || session.Status == domain.SessionFailed {
 		return session, nil
+	}
+	if err := s.setDesiredState(id, "STOPPED"); err != nil {
+		return domain.Session{}, fmt.Errorf("persist stopped state: %w", err)
 	}
 	if err := session.Transition(domain.SessionStopping); err != nil {
 		return domain.Session{}, err
@@ -206,6 +270,98 @@ func (s *Service) Stop(ctx context.Context, id string) (domain.Session, error) {
 		return domain.Session{}, err
 	}
 	return session, nil
+}
+
+func (s *Service) setDesiredState(sessionID, desired string) error {
+	store, ok := s.recorder.(ports.CaptureRecoveryStore)
+	if !ok {
+		return nil
+	}
+	return store.SetSessionDesiredState(sessionID, desired)
+}
+
+// AgentConnected replays desired capture commands after a server restart.
+func (s *Service) AgentConnected(ctx context.Context, _ string) {
+	sessions, err := s.repository.List(ctx)
+	if err != nil {
+		return
+	}
+	for _, captureSession := range sessions {
+		if captureSession.Status == domain.SessionRunning {
+			s.reconcileRecovered(ctx, captureSession.ID)
+		}
+	}
+}
+
+func (s *Service) reconcileRecovered(ctx context.Context, sessionID string) {
+	captureSession, err := s.repository.Get(ctx, sessionID)
+	if err != nil || captureSession.Status != domain.SessionRunning {
+		return
+	}
+	connected := s.agents.ConnectedNodes()
+	var desired []domain.CaptureSource
+	for _, target := range captureSession.Targets {
+		if target.Interface != nil {
+			nodes := target.Interface.Nodes
+			if len(nodes) == 0 {
+				nodes = connected
+			}
+			for _, node := range nodes {
+				if slices.Contains(connected, node) {
+					desired = append(desired, domain.CaptureSource{ID: interfaceSourceID(target.ID, node, target.Interface.LogicalInterface), TargetID: target.ID, TargetType: "interface", NodeName: node, LogicalInterface: target.Interface.LogicalInterface})
+				}
+			}
+			continue
+		}
+		if target.Workload != nil && s.resolver != nil {
+			resolved, resolveErr := s.resolver.Resolve(ctx, *target.Workload, target.ID)
+			if resolveErr != nil {
+				continue
+			}
+			for _, source := range resolved {
+				if slices.Contains(connected, source.NodeName) {
+					desired = append(desired, source)
+				}
+			}
+		}
+	}
+	desired = uniqueSources(desired)
+	if validateSourceDistribution(desired) != nil {
+		return
+	}
+	for _, source := range desired {
+		if s.hasRuntimeSource(sessionID, source.ID) {
+			continue
+		}
+		if err := s.startSource(ctx, captureSession, source); err == nil {
+			s.setRuntimeSource(sessionID, source)
+		}
+	}
+	s.updateSessionNodes(ctx, sessionID)
+	if s.runtimeSourceCount(sessionID) == 0 {
+		captureSession, err = s.repository.Get(ctx, sessionID)
+		if err == nil && captureSession.Status == domain.SessionRunning {
+			captureSession.Message = "waiting for capture agents after recovery"
+			_ = s.repository.Update(ctx, captureSession)
+		}
+	} else {
+		captureSession, err = s.repository.Get(ctx, sessionID)
+		if err == nil && (captureSession.Message == "recovering after server restart" || captureSession.Message == "waiting for capture agents after recovery") {
+			captureSession.Message = ""
+			_ = s.repository.Update(ctx, captureSession)
+		}
+	}
+}
+
+func (s *Service) hasRuntimeSource(sessionID, sourceID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	runtime := s.runtime[sessionID]
+	if runtime == nil {
+		return false
+	}
+	_, exists := runtime.sources[sourceID]
+	return exists
 }
 
 func (s *Service) Get(ctx context.Context, id string) (domain.Session, error) {
@@ -248,7 +404,7 @@ func (s *Service) AgentDisconnected(ctx context.Context, node string) {
 	s.mu.Lock()
 	for _, runtime := range s.runtime {
 		for sourceID, source := range runtime.sources {
-			if source.NodeName == node && source.TargetType == "workload" {
+			if source.NodeName == node {
 				delete(runtime.sources, sourceID)
 			}
 		}
@@ -269,8 +425,15 @@ func (s *Service) AgentDisconnected(ctx context.Context, node string) {
 			hasActiveNode = hasActiveNode || slices.Contains(connected, sessionNode)
 		}
 		if !hasActiveNode && !hasFollowingWorkload(captureSession.Targets) {
+			if captureSession.Mode == domain.SessionModeContinuous {
+				captureSession.Nodes = nil
+				captureSession.Message = "waiting for capture agents after disconnect"
+				_ = s.repository.Update(ctx, captureSession)
+				continue
+			}
 			_ = captureSession.Transition(domain.SessionFailed)
 			captureSession.Message = "all capture agents disconnected"
+			_ = s.setDesiredState(captureSession.ID, "STOPPED")
 			s.packets.CloseSession(captureSession.ID)
 		}
 		_ = s.repository.Update(ctx, captureSession)
@@ -291,6 +454,7 @@ func (s *Service) CaptureStatus(ctx context.Context, node, sessionID, sourceID, 
 		_ = session.Transition(domain.SessionFailed)
 		session.Message = "all capture sources failed: " + message
 		s.packets.CloseSession(sessionID)
+		_ = s.setDesiredState(sessionID, "STOPPED")
 		s.mu.Lock()
 		if runtime := s.runtime[sessionID]; runtime != nil {
 			runtime.cancel()

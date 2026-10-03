@@ -98,6 +98,20 @@ func NewService(source ports.WorkloadLogSource, factory ports.WorkloadLogRecorde
 }
 
 func (s *Service) Start(ctx context.Context, input StartInput) (Capture, error) {
+	startedAt := time.Now().UTC()
+	run := domain.LogCaptureRun{RunID: startedAt.Format("20060102T150405.000000000Z"), StartedAt: startedAt, Targets: cloneTargets(input.Targets), SinceSeconds: input.SinceSeconds, SegmentSize: s.config.SegmentSize, MaxRetainedSize: s.config.MaxRetainedSize}
+	return s.start(ctx, input, run, false)
+}
+
+func (s *Service) Restore(ctx context.Context, run domain.LogCaptureRun) (Capture, error) {
+	if run.RunID == "" || run.StartedAt.IsZero() {
+		return Capture{}, errors.New("invalid workload log recovery state")
+	}
+	input := StartInput{Targets: cloneTargets(run.Targets), SinceSeconds: 1}
+	return s.start(ctx, input, run, true)
+}
+
+func (s *Service) start(ctx context.Context, input StartInput, run domain.LogCaptureRun, recovered bool) (Capture, error) {
 	s.operation.Lock()
 	defer s.operation.Unlock()
 	s.mu.Lock()
@@ -112,16 +126,19 @@ func (s *Service) Start(ctx context.Context, input StartInput) (Capture, error) 
 	if err := s.validate(input); err != nil {
 		return s.startFailed(err)
 	}
-	startedAt := time.Now().UTC()
-	runID := startedAt.Format("20060102T150405.000000000Z")
-	recorder, err := s.factory.Start(domain.LogCaptureRun{RunID: runID, StartedAt: startedAt, Targets: cloneTargets(input.Targets), SegmentSize: s.config.SegmentSize, MaxRetainedSize: s.config.MaxRetainedSize})
+	run.Targets = cloneTargets(input.Targets)
+	recorder, err := s.factory.Start(run)
 	if err != nil {
 		return s.startFailed(err)
+	}
+	streamStartedAt := run.StartedAt
+	if recovered {
+		streamStartedAt = time.Now().UTC()
 	}
 	jobCtx, cancel := context.WithCancel(context.Background())
 	j := &job{
 		ctx: jobCtx, cancel: cancel, done: make(chan struct{}), source: s.source, recorder: recorder,
-		config: s.config, input: input, startedAt: startedAt, logger: s.logger, metrics: s.metrics,
+		config: s.config, input: input, startedAt: streamStartedAt, logger: s.logger, metrics: s.metrics,
 		records: make(chan domain.LogRecord, s.config.QueueSize), streams: make(map[string]*logStream),
 	}
 	j.onStreams = s.setStreams
@@ -130,12 +147,15 @@ func (s *Service) Start(ctx context.Context, input StartInput) (Capture, error) 
 	if err := j.reconcile(ctx); err != nil {
 		cancel()
 		_ = recorder.Close("FAILED", err.Error())
+		if !recovered {
+			_ = s.setDesiredState(run.RunID, "STOPPED")
+		}
 		return s.startFailed(err)
 	}
 
 	s.mu.Lock()
 	s.job = j
-	s.state = Capture{RunID: runID, Status: StateRunning, StartedAt: startedAt, ActiveStreams: len(j.streams), Targets: cloneTargets(input.Targets)}
+	s.state = Capture{RunID: run.RunID, Status: StateRunning, StartedAt: run.StartedAt, ActiveStreams: len(j.streams), Targets: cloneTargets(input.Targets)}
 	result := s.snapshotLocked()
 	s.mu.Unlock()
 	go j.run()
@@ -143,6 +163,10 @@ func (s *Service) Start(ctx context.Context, input StartInput) (Capture, error) 
 }
 
 func (s *Service) Stop(ctx context.Context) (Capture, error) {
+	return s.stop(ctx, true)
+}
+
+func (s *Service) stop(ctx context.Context, persistStopped bool) (Capture, error) {
 	s.operation.Lock()
 	defer s.operation.Unlock()
 	s.mu.Lock()
@@ -150,6 +174,13 @@ func (s *Service) Stop(ctx context.Context) (Capture, error) {
 		result := s.snapshotLocked()
 		s.mu.Unlock()
 		return result, nil
+	}
+	if persistStopped && s.state.RunID != "" {
+		if err := s.setDesiredState(s.state.RunID, "STOPPED"); err != nil {
+			result := s.snapshotLocked()
+			s.mu.Unlock()
+			return result, fmt.Errorf("persist stopped state: %w", err)
+		}
 	}
 	if s.job == nil {
 		s.state.Status = StateStopped
@@ -176,8 +207,16 @@ func (s *Service) Get() Capture {
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
-	_, err := s.Stop(ctx)
+	_, err := s.stop(ctx, false)
 	return err
+}
+
+func (s *Service) setDesiredState(runID, desired string) error {
+	store, ok := s.factory.(ports.WorkloadLogRecoveryStore)
+	if !ok {
+		return nil
+	}
+	return store.SetRunDesiredState(runID, desired)
 }
 
 func (s *Service) validate(input StartInput) error {

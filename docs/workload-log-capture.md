@@ -13,39 +13,24 @@ active globally; one job can contain multiple workload targets.
 ```bash
 export CAPMESH_TOKEN='replace-me'
 
-./bin/capmesh-client \
-  --server 10.106.142.184:18443 \
-  --tls-ca ./ca.crt \
-  --tls-server-name capmesh-server \
-  --token "$CAPMESH_TOKEN" \
-  --log-start \
-  --log-workload pramf01/statefulset/mm \
-  --log-workload pramf01/deployment/api \
-  --log-container app \
+./bin/capmesh-client start logcapture \
+  --workload pramf01/statefulset/mm \
+  --workload pramf01/deployment/api \
+  --container app \
   --log-since 5m \
   --max-pods 100
 
-./bin/capmesh-client \
-  --server 10.106.142.184:18443 \
-  --tls-ca ./ca.crt \
-  --tls-server-name capmesh-server \
-  --token "$CAPMESH_TOKEN" \
-  --log-status
+./bin/capmesh-client get logcapture
 
-./bin/capmesh-client \
-  --server 10.106.142.184:18443 \
-  --tls-ca ./ca.crt \
-  --tls-server-name capmesh-server \
-  --token "$CAPMESH_TOKEN" \
-  --log-stop
+./bin/capmesh-client stop logcapture
 ```
 
-Repeat `--log-workload` to capture several workloads in the same singleton job.
-Repeat `--log-container` to select containers; omit it to capture all regular
+Repeat `--workload` to capture several workloads in the same singleton job.
+Repeat `--container` to select containers; omit it to capture all regular
 application containers. Init containers are not captured. `--log-since 0`
 captures only logs produced from the job start time.
 
-A second `--log-start` returns gRPC `AlreadyExists`. Stop the current job before
+A second `start logcapture` returns gRPC `AlreadyExists`. Stop the current job before
 starting another. Admin/shared tokens may start and stop; viewer tokens may only
 read status.
 
@@ -103,6 +88,8 @@ ones. A disconnected Kubernetes log stream reconnects with bounded backoff and
 uses a small time overlap to reduce loss; this favors completeness and can
 produce a duplicate line around a reconnect boundary.
 
-The job state is in memory and does not resume automatically after a server
-restart. Finalized log files remain on the persistent volume and participate in
-retention when the next job starts.
+The desired job state is persisted in `log-recovery.json`. A replacement server
+pod resumes the newest job whose `desired_state` is `RUNNING`, re-resolves its
+workloads, and opens new log segments. Recovery requests a one-second overlap
+from the Kubernetes log API to reduce loss, so a duplicate line can occur at the
+restart boundary. An explicit stop persists `STOPPED` and prevents recovery.

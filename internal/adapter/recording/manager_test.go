@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -14,6 +15,74 @@ import (
 	appstream "github.com/quyenhl16/cap-mesh/internal/application/stream"
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
+
+func TestManagerRecoversRunningSessionAndHonorsExplicitStop(t *testing.T) {
+	root := t.TempDir()
+	config := Config{Directory: root, SegmentSize: 600, MaxSessionSize: 1600, QueueSize: 128, FlushInterval: time.Millisecond, SyncInterval: time.Hour}
+	packets := appstream.NewService(metricadapter.Noop{})
+	session := domain.Session{
+		ID: "recover-me", Mode: domain.SessionModeContinuous, Snaplen: 256,
+		CreatedAt: time.Now().UTC(), ReorderWindow: 5 * time.Millisecond,
+		Targets: []domain.CaptureTarget{{ID: "management", Interface: &domain.InterfaceTarget{Nodes: []string{"worker-1"}, LogicalInterface: "management"}}},
+	}
+	if err := packets.OpenSession(session.ID, session.ReorderWindow, 128); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(config, packets, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(session); err != nil {
+		t.Fatal(err)
+	}
+	packets.Publish(testBatch(session.ID, 1, 256))
+	time.Sleep(20 * time.Millisecond)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := manager.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+
+	nextPackets := appstream.NewService(metricadapter.Noop{})
+	nextManager, err := NewManager(config, nextPackets, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := nextManager.RecoverableSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 1 || recovered[0].ID != session.ID || recovered[0].ReorderWindow != session.ReorderWindow {
+		t.Fatalf("unexpected recovered sessions: %#v", recovered)
+	}
+	if err := nextPackets.OpenSession(session.ID, session.ReorderWindow, 128); err != nil {
+		t.Fatal(err)
+	}
+	if err := nextManager.Start(recovered[0]); err != nil {
+		t.Fatalf("restart recorder with existing segments: %v", err)
+	}
+	nextPackets.Publish(testBatch(session.ID, 2, 256))
+	time.Sleep(20 * time.Millisecond)
+	nextShutdownCtx, nextCancel := context.WithTimeout(context.Background(), time.Second)
+	defer nextCancel()
+	if err := nextManager.Shutdown(nextShutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	result := waitForContinuousMetadata(t, root)
+	if len(result.Segments) < 2 {
+		t.Fatalf("segments after recovery = %d, want at least 2", len(result.Segments))
+	}
+	if err := nextManager.SetSessionDesiredState(session.ID, "STOPPED"); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err = nextManager.RecoverableSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 0 {
+		t.Fatalf("explicitly stopped session was recoverable: %#v", recovered)
+	}
+}
 
 func TestManagerRotatesAndFinalizesRecording(t *testing.T) {
 	root := t.TempDir()

@@ -39,6 +39,7 @@ type LogCaptureRun struct {
 	RunID           string
 	StartedAt       time.Time
 	Targets         []WorkloadLogTarget
+	SinceSeconds    uint32
 	SegmentSize     int64
 	MaxRetainedSize int64
 }

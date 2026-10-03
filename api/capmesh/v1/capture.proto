@@ -21,6 +21,8 @@ service CaptureService {
   rpc StartWorkloadLogCapture(StartWorkloadLogCaptureRequest) returns (WorkloadLogCapture);
   rpc StopWorkloadLogCapture(StopWorkloadLogCaptureRequest) returns (WorkloadLogCapture);
   rpc GetWorkloadLogCapture(GetWorkloadLogCaptureRequest) returns (WorkloadLogCapture);
+  rpc ListSessionRecordings(ListSessionRecordingsRequest) returns (ListSessionRecordingsResponse);
+  rpc CleanSessionRecordings(CleanSessionRecordingsRequest) returns (CleanSessionRecordingsResponse);
 }
 
 message AgentMessage {
@@ -145,6 +147,48 @@ message ListSessionsRequest {
 
 message ListSessionsResponse {
   repeated CaptureSession sessions = 1;
+}
+
+message ListSessionRecordingsRequest {}
+
+message SessionRecordingInfo {
+  string session_id = 1;
+  string directory = 2;
+  uint64 size_bytes = 3;
+  uint32 segment_count = 4;
+  int64 created_at_ns = 5;
+  int64 finished_at_ns = 6;
+  string status = 7;
+  string desired_state = 8;
+  bool active = 9;
+  bool deletable = 10;
+}
+
+message ListSessionRecordingsResponse {
+  repeated SessionRecordingInfo recordings = 1;
+  uint64 total_size_bytes = 2;
+  uint64 configured_max_size_bytes = 3;
+}
+
+message CleanSessionRecordingsRequest {
+  bool dry_run = 1;
+}
+
+message RecordingCleanupFailure {
+  string session_id = 1;
+  string directory = 2;
+  string error = 3;
+}
+
+message CleanSessionRecordingsResponse {
+  uint64 configured_max_size_bytes = 1;
+  uint64 target_size_bytes = 2;
+  uint64 size_before_bytes = 3;
+  uint64 size_after_bytes = 4;
+  uint64 deleted_size_bytes = 5;
+  repeated SessionRecordingInfo deleted = 6;
+  repeated RecordingCleanupFailure failures = 7;
+  bool dry_run = 8;
 }
 
 message WorkloadLogTarget {

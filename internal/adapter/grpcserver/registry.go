@@ -26,6 +26,7 @@ type ConnectedAgent struct {
 type AgentRegistry struct {
 	mu           sync.RWMutex
 	agents       map[string]*agentConnection
+	onConnect    func(string)
 	onDisconnect func(string)
 }
 
@@ -38,7 +39,11 @@ func (r *AgentRegistry) register(node string, interfaces map[string]string) *age
 	connection := &agentConnection{commands: make(chan ports.AgentCommand, 512), interfaces: cloneInterfaces(interfaces), connectedAt: now, lastSeenAt: now}
 	r.mu.Lock()
 	r.agents[node] = connection
+	handler := r.onConnect
 	r.mu.Unlock()
+	if handler != nil {
+		go handler(node)
+	}
 	return connection
 }
 
@@ -67,6 +72,12 @@ func (r *AgentRegistry) unregister(node string, connection *agentConnection) {
 func (r *AgentRegistry) OnDisconnect(handler func(string)) {
 	r.mu.Lock()
 	r.onDisconnect = handler
+	r.mu.Unlock()
+}
+
+func (r *AgentRegistry) OnConnect(handler func(string)) {
+	r.mu.Lock()
+	r.onConnect = handler
 	r.mu.Unlock()
 }
 

@@ -24,9 +24,7 @@ session. It prints the session ID and exits without subscribing to the packet
 stream.
 
 ```bash
-capmesh-client \
-  --server capmesh-server:18443 \
-  --continuous-start \
+capmesh-client start continuous \
   --nodes worker-01,worker-02 \
   --interface uplink \
   --namespace payment \
@@ -41,8 +39,8 @@ Only one continuous capture can be active. Another start request returns gRPC
 `AlreadyExists`; callers must stop the current job before starting a new one.
 
 ```bash
-capmesh-client --server capmesh-server:18443 --continuous-status
-capmesh-client --server capmesh-server:18443 --continuous-stop
+capmesh-client get continuous
+capmesh-client stop continuous
 ```
 
 An admin or shared token is required to start and stop. Viewer, admin, and
@@ -50,7 +48,7 @@ shared tokens can read status. To inspect the live packets in Wireshark without
 affecting recording, use the returned session ID:
 
 ```bash
-capmesh-client --server capmesh-server:18443 --session SESSION_ID | wireshark -k -i -
+capmesh-client stream session SESSION_ID | wireshark -k -i -
 ```
 
 Disconnecting this streaming client leaves the server-owned job running.
@@ -78,10 +76,15 @@ briefly exceed the configured boundary by a small amount while the active
 Normal, TTL-based sessions keep their existing behavior: reaching the total
 limit ends that session as `TRUNCATED`; they do not delete old files.
 
-After a server restart, finalized continuous files remain on the volume but the
-job is not resumed automatically. A new start removes stale `.part` files,
-includes previous finalized segments in retention, and prunes the oldest files
-when necessary.
+The server persists `capture-recovery.json` beside `metadata.json`. If its
+`desired_state` is `RUNNING`, a replacement server pod rebuilds the session with
+the same ID, removes the stale `.part` segment, opens a new segment, and replays
+capture commands as agents reconnect. An explicit stop persists `STOPPED`
+before stopping the agents, so intentionally stopped jobs are not recovered.
+Finalized segments remain part of retention after recovery.
+
+Recovery resumes capture; it cannot recreate packets observed while the server
+was unavailable because agents do not yet keep an acknowledged replay buffer.
 
 The retention counters are exported as:
 

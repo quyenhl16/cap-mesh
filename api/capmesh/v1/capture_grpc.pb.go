@@ -127,6 +127,8 @@ const (
 	CaptureService_StartWorkloadLogCapture_FullMethodName = "/capmesh.v1.CaptureService/StartWorkloadLogCapture"
 	CaptureService_StopWorkloadLogCapture_FullMethodName  = "/capmesh.v1.CaptureService/StopWorkloadLogCapture"
 	CaptureService_GetWorkloadLogCapture_FullMethodName   = "/capmesh.v1.CaptureService/GetWorkloadLogCapture"
+	CaptureService_ListSessionRecordings_FullMethodName   = "/capmesh.v1.CaptureService/ListSessionRecordings"
+	CaptureService_CleanSessionRecordings_FullMethodName  = "/capmesh.v1.CaptureService/CleanSessionRecordings"
 )
 
 // CaptureServiceClient is the client API for CaptureService service.
@@ -145,6 +147,8 @@ type CaptureServiceClient interface {
 	StartWorkloadLogCapture(ctx context.Context, in *StartWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error)
 	StopWorkloadLogCapture(ctx context.Context, in *StopWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error)
 	GetWorkloadLogCapture(ctx context.Context, in *GetWorkloadLogCaptureRequest, opts ...grpc.CallOption) (*WorkloadLogCapture, error)
+	ListSessionRecordings(ctx context.Context, in *ListSessionRecordingsRequest, opts ...grpc.CallOption) (*ListSessionRecordingsResponse, error)
+	CleanSessionRecordings(ctx context.Context, in *CleanSessionRecordingsRequest, opts ...grpc.CallOption) (*CleanSessionRecordingsResponse, error)
 }
 
 type captureServiceClient struct {
@@ -284,6 +288,26 @@ func (c *captureServiceClient) GetWorkloadLogCapture(ctx context.Context, in *Ge
 	return out, nil
 }
 
+func (c *captureServiceClient) ListSessionRecordings(ctx context.Context, in *ListSessionRecordingsRequest, opts ...grpc.CallOption) (*ListSessionRecordingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSessionRecordingsResponse)
+	err := c.cc.Invoke(ctx, CaptureService_ListSessionRecordings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *captureServiceClient) CleanSessionRecordings(ctx context.Context, in *CleanSessionRecordingsRequest, opts ...grpc.CallOption) (*CleanSessionRecordingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CleanSessionRecordingsResponse)
+	err := c.cc.Invoke(ctx, CaptureService_CleanSessionRecordings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CaptureServiceServer is the server API for CaptureService service.
 // All implementations must embed UnimplementedCaptureServiceServer
 // for forward compatibility.
@@ -300,6 +324,8 @@ type CaptureServiceServer interface {
 	StartWorkloadLogCapture(context.Context, *StartWorkloadLogCaptureRequest) (*WorkloadLogCapture, error)
 	StopWorkloadLogCapture(context.Context, *StopWorkloadLogCaptureRequest) (*WorkloadLogCapture, error)
 	GetWorkloadLogCapture(context.Context, *GetWorkloadLogCaptureRequest) (*WorkloadLogCapture, error)
+	ListSessionRecordings(context.Context, *ListSessionRecordingsRequest) (*ListSessionRecordingsResponse, error)
+	CleanSessionRecordings(context.Context, *CleanSessionRecordingsRequest) (*CleanSessionRecordingsResponse, error)
 	mustEmbedUnimplementedCaptureServiceServer()
 }
 
@@ -345,6 +371,12 @@ func (UnimplementedCaptureServiceServer) StopWorkloadLogCapture(context.Context,
 }
 func (UnimplementedCaptureServiceServer) GetWorkloadLogCapture(context.Context, *GetWorkloadLogCaptureRequest) (*WorkloadLogCapture, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetWorkloadLogCapture not implemented")
+}
+func (UnimplementedCaptureServiceServer) ListSessionRecordings(context.Context, *ListSessionRecordingsRequest) (*ListSessionRecordingsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListSessionRecordings not implemented")
+}
+func (UnimplementedCaptureServiceServer) CleanSessionRecordings(context.Context, *CleanSessionRecordingsRequest) (*CleanSessionRecordingsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CleanSessionRecordings not implemented")
 }
 func (UnimplementedCaptureServiceServer) mustEmbedUnimplementedCaptureServiceServer() {}
 func (UnimplementedCaptureServiceServer) testEmbeddedByValue()                        {}
@@ -576,6 +608,42 @@ func _CaptureService_GetWorkloadLogCapture_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CaptureService_ListSessionRecordings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSessionRecordingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).ListSessionRecordings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_ListSessionRecordings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).ListSessionRecordings(ctx, req.(*ListSessionRecordingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _CaptureService_CleanSessionRecordings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CleanSessionRecordingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CaptureServiceServer).CleanSessionRecordings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CaptureService_CleanSessionRecordings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CaptureServiceServer).CleanSessionRecordings(ctx, req.(*CleanSessionRecordingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CaptureService_ServiceDesc is the grpc.ServiceDesc for CaptureService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -626,6 +694,14 @@ var CaptureService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetWorkloadLogCapture",
 			Handler:    _CaptureService_GetWorkloadLogCapture_Handler,
+		},
+		{
+			MethodName: "ListSessionRecordings",
+			Handler:    _CaptureService_ListSessionRecordings_Handler,
+		},
+		{
+			MethodName: "CleanSessionRecordings",
+			Handler:    _CaptureService_CleanSessionRecordings_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

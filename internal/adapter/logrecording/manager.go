@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +77,15 @@ type metadata struct {
 	Error         string                     `json:"error,omitempty"`
 }
 
+const logRecoveryFile = "log-recovery.json"
+
+type recoveryMetadata struct {
+	SchemaVersion int                  `json:"schema_version"`
+	DesiredState  string               `json:"desired_state"`
+	Generation    uint64               `json:"generation"`
+	Run           domain.LogCaptureRun `json:"run"`
+}
+
 var unsafePath = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 func NewFactory(config Config, logger *slog.Logger, metrics *Metrics) (*Factory, error) {
@@ -105,9 +115,51 @@ func NewFactory(config Config, logger *slog.Logger, metrics *Metrics) (*Factory,
 	return &Factory{config: config, logger: logger, metrics: metrics}, nil
 }
 
+func (f *Factory) RecoverableRuns() ([]domain.LogCaptureRun, error) {
+	entries, err := os.ReadDir(f.config.Directory)
+	if err != nil {
+		return nil, err
+	}
+	var runs []domain.LogCaptureRun
+	var readErr error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(f.config.Directory, entry.Name(), logRecoveryFile)
+		state, err := readRecovery(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			readErr = errors.Join(readErr, fmt.Errorf("read %s: %w", path, err))
+			continue
+		}
+		if state.DesiredState == "RUNNING" && state.Run.RunID != "" {
+			runs = append(runs, state.Run)
+		}
+	}
+	sort.Slice(runs, func(i, j int) bool { return runs[i].StartedAt.After(runs[j].StartedAt) })
+	return runs, readErr
+}
+
+func (f *Factory) SetRunDesiredState(runID, desired string) error {
+	if desired != "RUNNING" && desired != "STOPPED" {
+		return fmt.Errorf("invalid desired state %q", desired)
+	}
+	path := filepath.Join(f.config.Directory, safe(runID), logRecoveryFile)
+	state, err := readRecovery(path)
+	if err != nil {
+		return err
+	}
+	state.DesiredState = desired
+	state.Generation++
+	return writeRecovery(path, state)
+}
+
 func (f *Factory) Start(run domain.LogCaptureRun) (ports.WorkloadLogRecorder, error) {
 	runDir := filepath.Join(f.config.Directory, safe(run.RunID))
-	if err := os.Mkdir(runDir, 0o750); err != nil {
+	if err := os.MkdirAll(runDir, 0o750); err != nil {
 		return nil, fmt.Errorf("create log capture run directory: %w", err)
 	}
 	r := &recorder{
@@ -125,11 +177,66 @@ func (f *Factory) Start(run domain.LogCaptureRun) (ports.WorkloadLogRecorder, er
 	if err := r.writeMetadata(); err != nil {
 		return nil, err
 	}
+	recoveryPath := filepath.Join(runDir, logRecoveryFile)
+	state := recoveryMetadata{SchemaVersion: 1, DesiredState: "RUNNING", Generation: 1, Run: run}
+	if previous, readErr := readRecovery(recoveryPath); readErr == nil {
+		state.Generation = previous.Generation + 1
+	}
+	if err := writeRecovery(recoveryPath, state); err != nil {
+		return nil, fmt.Errorf("persist workload log recovery state: %w", err)
+	}
 	if r.metrics != nil {
 		r.metrics.SetActive(true)
 	}
 	go r.syncLoop()
 	return r, nil
+}
+
+func readRecovery(path string) (recoveryMetadata, error) {
+	var best recoveryMetadata
+	found := false
+	var readErr error
+	for _, candidate := range []string{path, path + ".part"} {
+		data, err := os.ReadFile(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			readErr = errors.Join(readErr, err)
+			continue
+		}
+		var state recoveryMetadata
+		if err := json.Unmarshal(data, &state); err != nil {
+			readErr = errors.Join(readErr, fmt.Errorf("decode %s: %w", candidate, err))
+			continue
+		}
+		if !found || state.Generation > best.Generation {
+			best = state
+			found = true
+		}
+	}
+	if found {
+		return best, nil
+	}
+	if readErr != nil {
+		return recoveryMetadata{}, readErr
+	}
+	return recoveryMetadata{}, os.ErrNotExist
+}
+
+func writeRecovery(path string, state recoveryMetadata) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	part := path + ".part"
+	if err := os.WriteFile(part, append(data, '\n'), 0o640); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(part, path)
 }
 
 func (r *recorder) Write(record domain.LogRecord) error {
@@ -228,6 +335,22 @@ func (r *recorder) Close(status, message string) error {
 func (r *recorder) open(writer *streamWriter) error {
 	if err := os.MkdirAll(writer.dir, 0o750); err != nil {
 		return fmt.Errorf("create log stream directory: %w", err)
+	}
+	if writer.sequence == 0 {
+		entries, err := os.ReadDir(writer.dir)
+		if err != nil {
+			return fmt.Errorf("scan log stream directory: %w", err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !strings.HasPrefix(name, "log-") || !strings.HasSuffix(name, ".log") {
+				continue
+			}
+			value := strings.TrimSuffix(strings.TrimPrefix(name, "log-"), ".log")
+			if sequence, parseErr := strconv.Atoi(value); parseErr == nil && sequence > writer.sequence {
+				writer.sequence = sequence
+			}
+		}
 	}
 	writer.sequence++
 	path := filepath.Join(writer.dir, fmt.Sprintf("log-%06d.log.part", writer.sequence))

@@ -15,6 +15,14 @@ var (
 	ErrUnavailable   = errors.New("unavailable")
 )
 
+type RecordingCapacityExceededError struct {
+	Capacity domain.RecordingCapacity
+}
+
+func (e *RecordingCapacityExceededError) Error() string {
+	return "normal recording storage limit reached"
+}
+
 type SessionRepository interface {
 	Create(context.Context, domain.Session) error
 	Get(context.Context, string) (domain.Session, error)
@@ -54,6 +62,20 @@ type CaptureRecorder interface {
 	Start(domain.Session) error
 }
 
+// CaptureRecoveryStore persists the desired state separately from the runtime
+// recording status. A server shutdown may interrupt a recorder, but it must not
+// turn a user-requested RUNNING session into a stopped session.
+type CaptureRecoveryStore interface {
+	RecoverableSessions() ([]domain.Session, error)
+	SetSessionDesiredState(string, string) error
+}
+
+type SessionRecordingCatalog interface {
+	ListSessionRecordings(context.Context) (domain.SessionRecordingCatalog, error)
+	CleanSessionRecordings(context.Context, bool) (domain.RecordingCleanupResult, error)
+	CheckNormalRecordingCapacity(context.Context) error
+}
+
 type RecordingUsageProvider interface {
 	Usage(string) (domain.RecordingUsage, bool)
 }
@@ -75,6 +97,11 @@ type WorkloadLogRecorder interface {
 
 type WorkloadLogRecorderFactory interface {
 	Start(domain.LogCaptureRun) (WorkloadLogRecorder, error)
+}
+
+type WorkloadLogRecoveryStore interface {
+	RecoverableRuns() ([]domain.LogCaptureRun, error)
+	SetRunDesiredState(string, string) error
 }
 
 type PodInterfaceResolver interface {
