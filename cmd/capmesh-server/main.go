@@ -40,24 +40,30 @@ func main() {
 	metricsAddress := flag.String("metrics-listen", ":19090", "Prometheus metrics listen address")
 	pprofAddress := flag.String("pprof-listen", "", "pprof listen address; empty disables pprof")
 	metricsSampleEvery := flag.Uint64("metrics-sample-every", 1024, "sample one in every N packets for per-packet latency metrics")
+	rebatchMaxPackets := flag.Int("rebatch-max-packets", 256, "maximum packets per batch emitted after reorder")
+	rebatchMaxBytes := flag.Int("rebatch-max-bytes", 1024*1024, "maximum captured bytes per batch emitted after reorder")
+	rebatchMaxDelay := flag.Duration("rebatch-max-delay", time.Millisecond, "maximum additional delay used to coalesce reordered packets")
 	token := flag.String("token", os.Getenv("CAPMESH_TOKEN"), "shared bearer token")
 	adminToken := flag.String("admin-token", os.Getenv("CAPMESH_ADMIN_TOKEN"), "bearer token allowed to create, view, and stop sessions")
 	viewerToken := flag.String("viewer-token", os.Getenv("CAPMESH_VIEWER_TOKEN"), "bearer token allowed to view sessions and packets")
 	agentToken := flag.String("agent-token", os.Getenv("CAPMESH_AGENT_TOKEN"), "bearer token allowed to connect agents")
 	tlsCert := flag.String("tls-cert", "", "TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "TLS private key file")
-	subscriberQueue := flag.Int("subscriber-queue-size", 10000, "per-subscriber packet queue size")
+	subscriberQueue := flag.Int("subscriber-queue-size", 256, "per-subscriber immutable batch queue size")
 	recordDirectory := flag.String("record-dir", "", "directory for server-side PCAPNG recordings; empty disables recording")
 	recordSegmentSize := flag.String("record-segment-size", "10MiB", "maximum size of each PCAPNG segment; 0 disables rotation")
 	recordMaxSessionSize := flag.String("record-max-session-size", "10GiB", "maximum total recording size per session; 0 means unlimited")
 	recordMaxNormalTotal := flag.String("record-max-normal-total-size", "50GiB", "maximum total size of normal session recording directories; 0 disables the limit")
-	recordQueueSize := flag.Int("record-queue-size", 65536, "packet queue size for each session recorder")
+	recordQueueSize := flag.Int("record-queue-size", 256, "batch queue size for each session recorder and workload log pipeline")
 	workloadReconcileInterval := flag.Duration("workload-reconcile-interval", 5*time.Second, "interval for reconciling workload pods and Calico endpoints")
 	if err := envconfig.Apply(flag.CommandLine, map[string]string{
 		"CAPMESH_SERVER_LISTEN":                "listen",
 		"CAPMESH_SERVER_METRICS_LISTEN":        "metrics-listen",
 		"CAPMESH_SERVER_PPROF_LISTEN":          "pprof-listen",
 		"CAPMESH_METRICS_SAMPLE_EVERY":         "metrics-sample-every",
+		"CAPMESH_SERVER_REBATCH_MAX_PACKETS":   "rebatch-max-packets",
+		"CAPMESH_SERVER_REBATCH_MAX_BYTES":     "rebatch-max-bytes",
+		"CAPMESH_SERVER_REBATCH_MAX_DELAY":     "rebatch-max-delay",
 		"CAPMESH_TLS_CERT":                     "tls-cert",
 		"CAPMESH_TLS_KEY":                      "tls-key",
 		"CAPMESH_SUBSCRIBER_QUEUE_SIZE":        "subscriber-queue-size",
@@ -76,6 +82,14 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if *metricsSampleEvery < 1 {
 		logger.Error("--metrics-sample-every must be positive")
+		os.Exit(2)
+	}
+	if *rebatchMaxPackets < 1 || *rebatchMaxBytes < 1 || *rebatchMaxDelay < 0 {
+		logger.Error("server rebatch limits must be positive and delay must not be negative")
+		os.Exit(2)
+	}
+	if *subscriberQueue < 1 {
+		logger.Error("--subscriber-queue-size must be positive")
 		os.Exit(2)
 	}
 	var segmentSize, maxSessionSize, maxNormalTotal int64
@@ -112,7 +126,7 @@ func main() {
 	registry := prometheus.NewRegistry()
 	observability.RegisterRuntimeCollectors(registry)
 	serverMetrics := metricadapter.NewServerWithSampling(registry, *metricsSampleEvery)
-	packetService := appstream.NewService(serverMetrics)
+	packetService := appstream.NewServiceWithRebatch(serverMetrics, appstream.RebatchConfig{MaxPackets: *rebatchMaxPackets, MaxBytes: *rebatchMaxBytes, MaxDelay: *rebatchMaxDelay})
 	agents := grpcserver.NewAgentRegistry()
 	var captureRecorder ports.CaptureRecorder
 	var recorderManager *recording.Manager

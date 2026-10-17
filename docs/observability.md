@@ -53,6 +53,9 @@ Agent pipeline:
 - `capmesh_agent_batch_packets`, `capmesh_agent_batch_bytes`, and
   `capmesh_agent_batch_age_seconds`
 - `capmesh_agent_batch_flush_total{reason=...}`
+- `capmesh_agent_outbound_queue_depth`,
+  `capmesh_agent_outbound_queue_overflows_total`, and
+  `capmesh_agent_outbound_dropped_packets_total`
 - `capmesh_agent_grpc_send_duration_seconds{type=...}` and
   `capmesh_agent_grpc_messages_total{type=...,result=...}`
 - `capmesh_agent_capture_errors_total`, `capmesh_agent_stream_errors_total`,
@@ -71,6 +74,9 @@ Server pipeline:
   `capmesh_server_subscriber_queue_usage`
 - `capmesh_server_late_packets_total` and
   `capmesh_server_subscriber_drops_total`
+- `capmesh_server_rebatch_packets`, `capmesh_server_rebatch_bytes`,
+  `capmesh_server_rebatch_age_seconds`, and
+  `capmesh_server_rebatch_flush_total{reason=...}`
 
 Recorder pipeline:
 

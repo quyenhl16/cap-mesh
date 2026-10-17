@@ -22,6 +22,10 @@ type Server struct {
 	fanoutDuration     prometheus.Histogram
 	fanoutDeliveries   prometheus.Counter
 	queueUsage         prometheus.Histogram
+	rebatchPackets     prometheus.Histogram
+	rebatchBytes       prometheus.Histogram
+	rebatchAge         prometheus.Histogram
+	rebatchFlushes     *prometheus.CounterVec
 	sampleEvery        uint64
 }
 
@@ -46,12 +50,16 @@ func NewServerWithSampling(registerer prometheus.Registerer, sampleEvery uint64)
 		subscribers:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_server_subscribers", Help: "Current packet stream subscribers."}),
 		reorderSize:        prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_server_reorder_buffer_packets", Help: "Packets currently buffered for reordering across all sessions."}),
 		reorderWait:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_server_reorder_wait_seconds", Help: "Sampled time packets spend in the reorder buffer.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}),
-		fanoutDuration:     prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_server_fanout_duration_seconds", Help: "Time to enqueue a packet for every subscriber.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}),
-		fanoutDeliveries:   prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_server_fanout_deliveries_total", Help: "Successful packet deliveries to subscriber queues."}),
+		fanoutDuration:     prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_server_fanout_duration_seconds", Help: "Time to enqueue an immutable batch for every subscriber.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}),
+		fanoutDeliveries:   prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_server_fanout_deliveries_total", Help: "Successful batch deliveries to subscriber queues."}),
 		queueUsage:         prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_server_subscriber_queue_usage", Help: "Subscriber queue utilization ratio.", Buckets: prometheus.LinearBuckets(0, .1, 11)}),
+		rebatchPackets:     prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_server_rebatch_packets", Help: "Packets per immutable batch emitted after reorder.", Buckets: prometheus.ExponentialBuckets(1, 2, 11)}),
+		rebatchBytes:       prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_server_rebatch_bytes", Help: "Captured bytes per immutable batch emitted after reorder.", Buckets: prometheus.ExponentialBuckets(1024, 2, 13)}),
+		rebatchAge:         prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_server_rebatch_age_seconds", Help: "Time from receiving the oldest packet until its immutable batch is emitted.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}),
+		rebatchFlushes:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "capmesh_server_rebatch_flush_total", Help: "Immutable reorder batches emitted by flush reason."}, []string{"reason"}),
 		sampleEvery:        sampleEvery,
 	}
-	registerer.MustRegister(m.received, m.emitted, m.batches, m.batchPackets, m.batchBytes, m.sequenceGapEvents, m.sequenceGapPackets, m.late, m.subscriberDrops, m.subscribers, m.reorderSize, m.reorderWait, m.fanoutDuration, m.fanoutDeliveries, m.queueUsage)
+	registerer.MustRegister(m.received, m.emitted, m.batches, m.batchPackets, m.batchBytes, m.sequenceGapEvents, m.sequenceGapPackets, m.late, m.subscriberDrops, m.subscribers, m.reorderSize, m.reorderWait, m.fanoutDuration, m.fanoutDeliveries, m.queueUsage, m.rebatchPackets, m.rebatchBytes, m.rebatchAge, m.rebatchFlushes)
 	return m
 }
 
@@ -67,7 +75,7 @@ func (m *Server) SequenceGap(packets uint64) {
 	m.sequenceGapPackets.Add(float64(packets))
 }
 func (m *Server) LatePacket()                          { m.late.Inc() }
-func (m *Server) SubscriberDrop()                      { m.subscriberDrops.Inc() }
+func (m *Server) SubscriberDrop(packets int)           { m.subscriberDrops.Add(float64(packets)) }
 func (m *Server) AddReorderBuffer(delta int)           { m.reorderSize.Add(float64(delta)) }
 func (m *Server) SubscriberAdded()                     { m.subscribers.Inc() }
 func (m *Server) SubscriberRemoved()                   { m.subscribers.Dec() }
@@ -81,18 +89,25 @@ func (m *Server) ObserveReorderWait(sequence uint64, duration time.Duration) {
 		m.reorderWait.Observe(duration.Seconds())
 	}
 }
+func (m *Server) ObserveRebatch(packets, bytes int, age time.Duration, reason string) {
+	m.rebatchPackets.Observe(float64(packets))
+	m.rebatchBytes.Observe(float64(bytes))
+	m.rebatchAge.Observe(age.Seconds())
+	m.rebatchFlushes.WithLabelValues(reason).Inc()
+}
 
 type Noop struct{}
 
-func (Noop) PacketsReceived(int)                      {}
-func (Noop) PacketsEmitted(int)                       {}
-func (Noop) BatchReceived(int, int)                   {}
-func (Noop) SequenceGap(uint64)                       {}
-func (Noop) LatePacket()                              {}
-func (Noop) SubscriberDrop()                          {}
-func (Noop) AddReorderBuffer(int)                     {}
-func (Noop) ObserveReorderWait(uint64, time.Duration) {}
-func (Noop) SubscriberAdded()                         {}
-func (Noop) SubscriberRemoved()                       {}
-func (Noop) ObserveFanout(time.Duration, int)         {}
-func (Noop) ObserveSubscriberQueue(float64)           {}
+func (Noop) PacketsReceived(int)                            {}
+func (Noop) PacketsEmitted(int)                             {}
+func (Noop) BatchReceived(int, int)                         {}
+func (Noop) SequenceGap(uint64)                             {}
+func (Noop) LatePacket()                                    {}
+func (Noop) SubscriberDrop(int)                             {}
+func (Noop) AddReorderBuffer(int)                           {}
+func (Noop) ObserveReorderWait(uint64, time.Duration)       {}
+func (Noop) SubscriberAdded()                               {}
+func (Noop) SubscriberRemoved()                             {}
+func (Noop) ObserveFanout(time.Duration, int)               {}
+func (Noop) ObserveSubscriberQueue(float64)                 {}
+func (Noop) ObserveRebatch(int, int, time.Duration, string) {}

@@ -8,7 +8,8 @@ import (
 )
 
 type packetItem struct {
-	batch      domain.PacketBatch
+	template   domain.PacketBatch
+	packet     domain.Packet
 	receivedAt time.Time
 	index      int
 }
@@ -17,7 +18,7 @@ type packetHeap []*packetItem
 
 func (h packetHeap) Len() int { return len(h) }
 func (h packetHeap) Less(i, j int) bool {
-	a, b := h[i].batch.Packets[0], h[j].batch.Packets[0]
+	a, b := h[i].packet, h[j].packet
 	if a.Timestamp.Equal(b.Timestamp) {
 		return a.SequenceNumber < b.SequenceNumber
 	}
@@ -38,6 +39,6 @@ func (h *packetHeap) Pop() any {
 }
 
 func pushPacket(h *packetHeap, batch domain.PacketBatch, packet domain.Packet, receivedAt time.Time) {
-	batch.Packets = []domain.Packet{packet}
-	heap.Push(h, &packetItem{batch: batch, receivedAt: receivedAt})
+	batch.Packets = nil
+	heap.Push(h, &packetItem{template: batch, packet: packet, receivedAt: receivedAt})
 }

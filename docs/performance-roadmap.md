@@ -56,6 +56,12 @@ Các chỉ số mục tiêu cần được chốt trước khi triển khai:
 
 ## Giai đoạn 1 — Tối ưu pipeline hiện tại
 
+Phạm vi đã chốt để chuẩn bị cho AF_PACKET/TPACKET_V3 gồm pipeline capture theo
+batch, rebatch sau reorder, shared immutable batch và bounded queue. Single-owner
+event loop và memory pooling được hoãn lại cho tới khi profiling chứng minh chúng
+là nút thắt. Contract triển khai chi tiết nằm tại
+[`phase-1-batch-pipeline.md`](phase-1-batch-pipeline.md).
+
 ### 1. Rebatch sau reorder
 
 Thay vì phát từng packet riêng lẻ, gom packet đã reorder thành batch, ví dụ:

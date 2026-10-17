@@ -15,18 +15,19 @@ type testMetrics struct {
 	late  int
 }
 
-func (*testMetrics) PacketsReceived(int)                      {}
-func (*testMetrics) PacketsEmitted(int)                       {}
-func (*testMetrics) BatchReceived(int, int)                   {}
-func (*testMetrics) SequenceGap(uint64)                       {}
-func (m *testMetrics) LatePacket()                            { m.mu.Lock(); m.late++; m.mu.Unlock() }
-func (m *testMetrics) SubscriberDrop()                        { m.mu.Lock(); m.drops++; m.mu.Unlock() }
-func (*testMetrics) AddReorderBuffer(int)                     {}
-func (*testMetrics) ObserveReorderWait(uint64, time.Duration) {}
-func (*testMetrics) SubscriberAdded()                         {}
-func (*testMetrics) SubscriberRemoved()                       {}
-func (*testMetrics) ObserveFanout(time.Duration, int)         {}
-func (*testMetrics) ObserveSubscriberQueue(float64)           {}
+func (*testMetrics) PacketsReceived(int)                            {}
+func (*testMetrics) PacketsEmitted(int)                             {}
+func (*testMetrics) BatchReceived(int, int)                         {}
+func (*testMetrics) SequenceGap(uint64)                             {}
+func (m *testMetrics) LatePacket()                                  { m.mu.Lock(); m.late++; m.mu.Unlock() }
+func (m *testMetrics) SubscriberDrop(packets int)                   { m.mu.Lock(); m.drops += packets; m.mu.Unlock() }
+func (*testMetrics) AddReorderBuffer(int)                           {}
+func (*testMetrics) ObserveReorderWait(uint64, time.Duration)       {}
+func (*testMetrics) SubscriberAdded()                               {}
+func (*testMetrics) SubscriberRemoved()                             {}
+func (*testMetrics) ObserveFanout(time.Duration, int)               {}
+func (*testMetrics) ObserveSubscriberQueue(float64)                 {}
+func (*testMetrics) ObserveRebatch(int, int, time.Duration, string) {}
 
 func TestReordersPacketsByTimestamp(t *testing.T) {
 	metrics := &testMetrics{}
@@ -48,7 +49,9 @@ func TestReordersPacketsByTimestamp(t *testing.T) {
 	for len(sequences) < 2 {
 		select {
 		case batch := <-output:
-			sequences = append(sequences, batch.Packets[0].SequenceNumber)
+			for _, packet := range batch.Packets {
+				sequences = append(sequences, packet.SequenceNumber)
+			}
 		case <-deadline:
 			t.Fatal("timed out waiting for reordered packets")
 		}
@@ -99,9 +102,8 @@ func TestLossAwareSubscriberIsDisconnectedOnOverflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().Add(-time.Second)
-	service.Publish(domain.PacketBatch{SessionID: "s1", Packets: []domain.Packet{{Timestamp: now, SequenceNumber: 1}, {Timestamp: now.Add(time.Nanosecond), SequenceNumber: 2}}})
-
 	for i := 0; i < 2; i++ {
+		service.Publish(domain.PacketBatch{SessionID: "s1", Packets: []domain.Packet{{Timestamp: now.Add(time.Duration(i) * time.Nanosecond), SequenceNumber: uint64(i + 1)}}})
 		select {
 		case <-live:
 		case <-time.After(time.Second):
@@ -112,5 +114,50 @@ func TestLossAwareSubscriberIsDisconnectedOnOverflow(t *testing.T) {
 	case <-recorder.Dropped:
 	case <-time.After(time.Second):
 		t.Fatal("loss-aware subscriber was not notified of overflow")
+	}
+}
+
+func TestRebatchesAfterReorderAndSharesImmutablePayload(t *testing.T) {
+	service := NewServiceWithRebatch(&testMetrics{}, RebatchConfig{MaxPackets: 2, MaxBytes: 1024, MaxDelay: 0})
+	if err := service.OpenSession("s1", 0, 10); err != nil {
+		t.Fatal(err)
+	}
+	defer service.CloseSession("s1")
+	first, err := service.Subscribe(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Subscribe(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(-time.Second)
+	service.Publish(domain.PacketBatch{SessionID: "s1", Packets: []domain.Packet{
+		{Timestamp: now, SequenceNumber: 1, CapturedLength: 1, Data: []byte{1}},
+		{Timestamp: now.Add(time.Nanosecond), SequenceNumber: 2, CapturedLength: 1, Data: []byte{2}},
+		{Timestamp: now.Add(2 * time.Nanosecond), SequenceNumber: 3, CapturedLength: 1, Data: []byte{3}},
+	}})
+
+	firstBatch := receiveBatch(t, first)
+	secondBatch := receiveBatch(t, second)
+	if len(firstBatch.Packets) != 2 || len(secondBatch.Packets) != 2 {
+		t.Fatalf("first rebatch sizes = %d and %d, want 2", len(firstBatch.Packets), len(secondBatch.Packets))
+	}
+	if &firstBatch.Packets[0].Data[0] != &secondBatch.Packets[0].Data[0] {
+		t.Fatal("subscriber payload was deep-cloned")
+	}
+	if got := len(receiveBatch(t, first).Packets); got != 1 {
+		t.Fatalf("second rebatch size = %d, want 1", got)
+	}
+}
+
+func receiveBatch(t *testing.T, batches <-chan domain.PacketBatch) domain.PacketBatch {
+	t.Helper()
+	select {
+	case batch := <-batches:
+		return batch
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for batch")
+		return domain.PacketBatch{}
 	}
 }

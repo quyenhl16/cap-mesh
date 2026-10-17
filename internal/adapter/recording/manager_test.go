@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopacket/gopacket/pcapgo"
+	"github.com/prometheus/client_golang/prometheus"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
 	appstream "github.com/quyenhl16/cap-mesh/internal/application/stream"
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
@@ -90,7 +91,8 @@ func TestManagerRotatesAndFinalizesRecording(t *testing.T) {
 	if err := packets.OpenSession("session-test", 0, 128); err != nil {
 		t.Fatal(err)
 	}
-	manager, err := NewManager(Config{Directory: root, SegmentSize: 600, MaxSessionSize: 0, QueueSize: 128, FlushInterval: time.Millisecond, SyncInterval: time.Hour}, packets, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	metrics := NewMetrics(prometheus.NewRegistry())
+	manager, err := NewManager(Config{Directory: root, SegmentSize: 600, MaxSessionSize: 0, QueueSize: 128, FlushInterval: time.Millisecond, SyncInterval: time.Hour}, packets, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics)
 	if err != nil {
 		t.Fatal(err)
 	}

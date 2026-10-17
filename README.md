@@ -396,7 +396,7 @@ data:
   CAPMESH_RECORD_SEGMENT_SIZE: 10MiB
   CAPMESH_RECORD_MAX_SESSION_SIZE: 10GiB
   CAPMESH_RECORD_MAX_NORMAL_TOTAL_SIZE: 50GiB
-  CAPMESH_RECORD_QUEUE_SIZE: "65536"
+  CAPMESH_RECORD_QUEUE_SIZE: "256"
 
 # Server container/pod
 volumeMounts:
@@ -417,21 +417,22 @@ cho scheduling/binding, còn dung lượng thực phụ thuộc ổ đĩa của 
 
 | Thành phần | Flag | Mặc định |
 | --- | --- | --- |
-| Server | `--subscriber-queue-size` | `10000` |
+| Server | `--subscriber-queue-size` | `256` immutable batch |
+| Server | rebatch packet / bytes / delay | `256` / `1MiB` / `1ms` |
 | Server | `--record-dir` | Rỗng, recording bị tắt |
 | Server | `--record-segment-size` | `10MiB`; `0` để không chia segment |
 | Server | `--record-max-session-size` | `10GiB`; `0` để không giới hạn tổng mỗi session |
 | Server | `--record-max-normal-total-size` | `50GiB`; tổng quota thư mục normal session, `0` để tắt quota và cleanup |
-| Server | `--record-queue-size` | `65536` packet mỗi session |
+| Server | `--record-queue-size` | `256` batch mỗi session |
 | Agent | `--interface alias=physical` | Bắt buộc ít nhất một ánh xạ, lặp lại tối đa 10 lần |
-| Agent | batch packet / delay | `64` / `10ms` (MVP cố định) |
+| Agent | batch packet / bytes / delay | `256` / `1MiB` / `1ms` |
 | Agent | `--capture-log-interval` | `10s`; đặt `0` để tắt log định kỳ |
 | Client | `--snaplen` | `4096` byte; dùng `65535` khi cần toàn bộ payload |
 | Client | `--reorder-window` | `300ms` |
 | Client | flush packet / delay | `64` / `50ms` (MVP cố định) |
 | Client | `--ttl` | `5m` |
 
-Nếu queue của một subscriber đầy, server drop packet chỉ trên subscriber đó; capture và các subscriber khác không bị backpressure. Nếu queue recorder đầy, file được finalize dưới dạng `*.partial.pcapng`, metadata chuyển thành `PARTIAL`, còn live stream tiếp tục. Counter `capmesh_server_subscriber_drops_total` ghi nhận tình trạng này.
+Nếu queue của một subscriber đầy, server drop batch chỉ trên subscriber đó; capture và các subscriber khác không bị backpressure. Nếu queue recorder đầy, file được finalize dưới dạng `*.partial.pcapng`, metadata chuyển thành `PARTIAL`, còn live stream tiếp tục. Counter `capmesh_server_subscriber_drops_total` ghi nhận số packet bị drop.
 
 ## Metrics
 

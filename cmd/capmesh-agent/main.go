@@ -81,6 +81,9 @@ func main() {
 	serverName := flag.String("tls-server-name", "", "TLS server name override")
 	metricsAddress := flag.String("metrics-listen", ":19091", "Prometheus metrics listen address")
 	pprofAddress := flag.String("pprof-listen", "", "pprof listen address; empty disables pprof")
+	batchMaxPackets := flag.Int("batch-max-packets", 256, "maximum packets per capture batch")
+	batchMaxBytes := flag.Int("batch-max-bytes", 1024*1024, "maximum captured bytes per capture batch")
+	batchMaxDelay := flag.Duration("batch-max-delay", time.Millisecond, "maximum time to build a capture batch")
 	captureLogInterval := flag.Duration("capture-log-interval", 10*time.Second, "interval for per-interface packet count logs; 0 disables periodic logs")
 	interfacesFromKubernetes := flag.Bool("interfaces-from-kubernetes", false, "read interface mappings from Node annotations")
 	if err := envconfig.Apply(flag.CommandLine, map[string]string{
@@ -94,6 +97,9 @@ func main() {
 		"CAPMESH_TLS_SERVER_NAME":            "tls-server-name",
 		"CAPMESH_AGENT_METRICS_LISTEN":       "metrics-listen",
 		"CAPMESH_AGENT_PPROF_LISTEN":         "pprof-listen",
+		"CAPMESH_AGENT_BATCH_MAX_PACKETS":    "batch-max-packets",
+		"CAPMESH_AGENT_BATCH_MAX_BYTES":      "batch-max-bytes",
+		"CAPMESH_AGENT_BATCH_MAX_DELAY":      "batch-max-delay",
 		"CAPMESH_CAPTURE_LOG_INTERVAL":       "capture-log-interval",
 		"CAPMESH_INTERFACES_FROM_KUBERNETES": "interfaces-from-kubernetes",
 	}); err != nil {
@@ -137,14 +143,20 @@ func main() {
 		logger.Error("--capture-log-interval must not be negative")
 		os.Exit(2)
 	}
+	if *batchMaxPackets < 1 || *batchMaxBytes < 1 || *batchMaxDelay <= 0 {
+		logger.Error("capture batch limits must be positive")
+		os.Exit(2)
+	}
 
 	reporter := grpcclient.NewReporter(256)
 	registry := prometheus.NewRegistry()
 	observability.RegisterRuntimeCollectors(registry)
 	agentMetrics := metricadapter.NewAgent(registry, reporter)
+	reporter.SetMetrics(agentMetrics)
 	engine := metricadapter.NewCaptureEngine(capture.Dumpcap{Binary: *dumpcap, Logger: logger}, agentMetrics)
 	progressLogger := logadapter.NewCaptureProgress(logger)
-	service := appagent.NewService(*node, interfaces, engine, agentMetrics, progressLogger, 64, 10*time.Millisecond, *captureLogInterval)
+	service := appagent.NewService(*node, interfaces, engine, agentMetrics, progressLogger, *batchMaxPackets, *batchMaxDelay, *captureLogInterval)
+	service.SetBatchMaxBytes(*batchMaxBytes)
 	service.SetMetrics(agentMetrics)
 	service.SetPodInterfaceResolver(capture.IPRouteResolver{Binary: "ip"})
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}

@@ -48,25 +48,30 @@ func (w *Writer) BytesWritten() int64 {
 }
 
 func (w *Writer) WriteBatch(batch domain.PacketBatch) error {
-	key := interfaceDisplayName(batch)
 	for _, packet := range batch.Packets {
-		interfaceID, err := w.ensureInterface(key, packet.LinkType)
-		if err != nil {
+		if err := w.WritePacket(batch, packet); err != nil {
 			return err
 		}
-		if packet.LinkType != w.linkTypes[key] {
-			return fmt.Errorf("link type changed for interface %s", key)
-		}
-		ci := gopacket.CaptureInfo{Timestamp: packet.Timestamp, CaptureLength: int(packet.CapturedLength), Length: int(packet.OriginalLength), InterfaceIndex: interfaceID}
-		if err := w.writer.WritePacket(ci, packet.Data); err != nil {
-			return fmt.Errorf("write PCAPNG packet: %w", err)
-		}
-		w.packetCount++
-		if w.packetCount >= w.flushPackets || time.Since(w.lastFlush) >= w.flushInterval {
-			if err := w.Flush(); err != nil {
-				return err
-			}
-		}
+	}
+	return nil
+}
+
+func (w *Writer) WritePacket(batch domain.PacketBatch, packet domain.Packet) error {
+	key := interfaceDisplayName(batch)
+	interfaceID, err := w.ensureInterface(key, packet.LinkType)
+	if err != nil {
+		return err
+	}
+	if packet.LinkType != w.linkTypes[key] {
+		return fmt.Errorf("link type changed for interface %s", key)
+	}
+	ci := gopacket.CaptureInfo{Timestamp: packet.Timestamp, CaptureLength: int(packet.CapturedLength), Length: int(packet.OriginalLength), InterfaceIndex: interfaceID}
+	if err := w.writer.WritePacket(ci, packet.Data); err != nil {
+		return fmt.Errorf("write PCAPNG packet: %w", err)
+	}
+	w.packetCount++
+	if w.packetCount >= w.flushPackets || time.Since(w.lastFlush) >= w.flushInterval {
+		return w.Flush()
 	}
 	return nil
 }

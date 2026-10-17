@@ -8,6 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
+	"github.com/quyenhl16/cap-mesh/internal/core/ports"
 )
 
 func TestServerMetricsExposePipelineSignals(t *testing.T) {
@@ -22,11 +23,13 @@ func TestServerMetricsExposePipelineSignals(t *testing.T) {
 	metrics.ObserveReorderWait(2, 2*time.Millisecond)
 	metrics.SubscriberAdded()
 	metrics.ObserveFanout(time.Millisecond, 2)
+	metrics.ObserveRebatch(3, 300, time.Millisecond, "packets")
 
 	assertMetricValue(t, registry, "capmesh_server_batches_received_total", 1)
 	assertMetricValue(t, registry, "capmesh_server_sequence_gap_packets_total", 2)
 	assertMetricValue(t, registry, "capmesh_server_reorder_buffer_packets", 3)
 	assertHistogramCount(t, registry, "capmesh_server_reorder_wait_seconds", 1)
+	assertHistogramCount(t, registry, "capmesh_server_rebatch_packets", 1)
 }
 
 func TestAgentMetricsSeparateAcceptedAndTransportErrors(t *testing.T) {
@@ -47,10 +50,29 @@ func TestAgentMetricsSeparateAcceptedAndTransportErrors(t *testing.T) {
 	assertHistogramCount(t, registry, "capmesh_agent_batch_packets", 1)
 }
 
+func TestAgentMetricsCountDroppedBatchWhenOutboundQueueIsFull(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewAgent(registry, &fullReporter{})
+	batch := domain.PacketBatch{Packets: []domain.Packet{{}, {}, {}}}
+	if err := metrics.SendBatch(context.Background(), batch); err != nil {
+		t.Fatal(err)
+	}
+	assertMetricValue(t, registry, "capmesh_agent_outbound_queue_overflows_total", 1)
+	assertMetricValue(t, registry, "capmesh_agent_outbound_dropped_packets_total", 3)
+	assertMetricValue(t, registry, "capmesh_agent_batches_sent_total", 0)
+}
+
 type stubReporter struct{}
 
 func (*stubReporter) SendBatch(context.Context, domain.PacketBatch) error { return nil }
 func (*stubReporter) SendStatus(context.Context, string, string, string, string) error {
+	return nil
+}
+
+type fullReporter struct{}
+
+func (*fullReporter) SendBatch(context.Context, domain.PacketBatch) error { return ports.ErrQueueFull }
+func (*fullReporter) SendStatus(context.Context, string, string, string, string) error {
 	return nil
 }
 

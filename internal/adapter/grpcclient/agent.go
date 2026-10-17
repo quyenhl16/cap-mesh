@@ -18,32 +18,65 @@ type Reporter struct {
 	mu        sync.RWMutex
 	connected bool
 	outbound  chan *capmeshv1.AgentMessage
+	metrics   interface {
+		ObserveOutboundQueue(int, int)
+		ObserveOutboundDiscard(int)
+	}
 }
 
 func NewReporter(queueSize int) *Reporter {
 	return &Reporter{outbound: make(chan *capmeshv1.AgentMessage, queueSize)}
 }
 
+func (r *Reporter) SetMetrics(metrics interface {
+	ObserveOutboundQueue(int, int)
+	ObserveOutboundDiscard(int)
+}) {
+	r.metrics = metrics
+	if metrics != nil {
+		metrics.ObserveOutboundQueue(len(r.outbound), cap(r.outbound))
+	}
+}
+
 func (r *Reporter) SendBatch(ctx context.Context, batch domain.PacketBatch) error {
-	return r.send(ctx, &capmeshv1.AgentMessage{Batch: grpcapi.PacketBatchToProto(batch)})
+	if len(r.outbound) == cap(r.outbound) {
+		return ports.ErrQueueFull
+	}
+	return r.send(ctx, &capmeshv1.AgentMessage{Batch: grpcapi.PacketBatchToProto(batch)}, true)
 }
 
 func (r *Reporter) SendStatus(ctx context.Context, sessionID, sourceID, state, message string) error {
-	return r.send(ctx, &capmeshv1.AgentMessage{Status: &capmeshv1.CaptureStatus{SessionId: sessionID, SourceId: sourceID, State: state, Error: message}})
+	return r.send(ctx, &capmeshv1.AgentMessage{Status: &capmeshv1.CaptureStatus{SessionId: sessionID, SourceId: sourceID, State: state, Error: message}}, false)
 }
 
-func (r *Reporter) send(ctx context.Context, message *capmeshv1.AgentMessage) error {
+func (r *Reporter) send(ctx context.Context, message *capmeshv1.AgentMessage, dropWhenFull bool) error {
 	r.mu.RLock()
 	connected := r.connected
 	r.mu.RUnlock()
 	if !connected {
 		return ports.ErrUnavailable
 	}
+	if dropWhenFull {
+		select {
+		case r.outbound <- message:
+			r.observeQueue()
+			return nil
+		default:
+			return ports.ErrQueueFull
+		}
+	}
 	select {
 	case r.outbound <- message:
+		r.observeQueue()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (r *Reporter) observeQueue() {
+	if r.metrics != nil {
+		r.metrics.ObserveOutboundQueue(len(r.outbound), cap(r.outbound))
 	}
 }
 
@@ -54,7 +87,11 @@ func (r *Reporter) setConnected(value bool) {
 	if !value {
 		for {
 			select {
-			case <-r.outbound:
+			case message := <-r.outbound:
+				if batch := message.GetBatch(); batch != nil && r.metrics != nil {
+					r.metrics.ObserveOutboundDiscard(len(batch.GetPackets()))
+				}
+				r.observeQueue()
 			default:
 				return
 			}
@@ -122,6 +159,7 @@ func (t *AgentTransport) Connect(ctx context.Context, node string, interfaces ma
 	for {
 		select {
 		case message := <-t.reporter.outbound:
+			t.reporter.observeQueue()
 			messageType := "status"
 			if message.GetBatch() != nil {
 				messageType = "batch"

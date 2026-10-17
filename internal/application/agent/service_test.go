@@ -11,7 +11,7 @@ import (
 )
 
 type fakeEngine struct {
-	packets chan domain.Packet
+	batches chan domain.CapturedBatch
 	errors  chan error
 }
 
@@ -25,15 +25,15 @@ type multiEngine struct {
 	calls []captureCall
 }
 
-func (e *multiEngine) Capture(_ context.Context, iface, filter string, _ uint32) (<-chan domain.Packet, <-chan error, error) {
+func (e *multiEngine) Capture(_ context.Context, request ports.CaptureRequest) (<-chan domain.CapturedBatch, <-chan error, error) {
 	e.mu.Lock()
-	e.calls = append(e.calls, captureCall{interfaceName: iface, filter: filter})
+	e.calls = append(e.calls, captureCall{interfaceName: request.InterfaceName, filter: request.Filter})
 	e.mu.Unlock()
-	return make(chan domain.Packet), make(chan error), nil
+	return make(chan domain.CapturedBatch), make(chan error), nil
 }
 
-func (f *fakeEngine) Capture(context.Context, string, string, uint32) (<-chan domain.Packet, <-chan error, error) {
-	return f.packets, f.errors, nil
+func (f *fakeEngine) Capture(context.Context, ports.CaptureRequest) (<-chan domain.CapturedBatch, <-chan error, error) {
+	return f.batches, f.errors, nil
 }
 
 type fakeReporter struct {
@@ -67,15 +67,14 @@ func (f *fakeReporter) SendStatus(_ context.Context, _, _ string, state, _ strin
 	return nil
 }
 
-func TestBatchFlushesAtMaximumPacketCount(t *testing.T) {
-	engine := &fakeEngine{packets: make(chan domain.Packet, 3), errors: make(chan error)}
+func TestForwardsCapturedBatch(t *testing.T) {
+	engine := &fakeEngine{batches: make(chan domain.CapturedBatch, 1), errors: make(chan error)}
 	reporter := &fakeReporter{}
 	service := NewService("worker-1", map[string]string{"A": "eth0"}, engine, reporter, nil, 2, time.Hour, 0)
 	if err := service.Start(context.Background(), StartRequest{SessionID: "s1", LogicalInterface: "A", Snaplen: 256}); err != nil {
 		t.Fatal(err)
 	}
-	engine.packets <- domain.Packet{SequenceNumber: 1}
-	engine.packets <- domain.Packet{SequenceNumber: 2}
+	engine.batches <- domain.CapturedBatch{Packets: []domain.Packet{{SequenceNumber: 1}, {SequenceNumber: 2}}, StartedAt: time.Now(), FlushReason: "packets"}
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		reporter.mu.Lock()
@@ -95,7 +94,7 @@ func TestBatchFlushesAtMaximumPacketCount(t *testing.T) {
 }
 
 func TestStartNormalizesCustomInterfaceAlias(t *testing.T) {
-	engine := &fakeEngine{packets: make(chan domain.Packet), errors: make(chan error)}
+	engine := &fakeEngine{batches: make(chan domain.CapturedBatch), errors: make(chan error)}
 	service := NewService("worker-1", map[string]string{"data-east": "ens192"}, engine, &fakeReporter{}, nil, 64, time.Hour, 0)
 	if err := service.Start(context.Background(), StartRequest{SessionID: "s1", LogicalInterface: "DATA-East", Snaplen: 256}); err != nil {
 		t.Fatal(err)
@@ -125,14 +124,14 @@ func TestStartsMultipleSourcesInOneSession(t *testing.T) {
 	service.StopAll()
 }
 
-func TestBatchFlushesAfterDelay(t *testing.T) {
-	engine := &fakeEngine{packets: make(chan domain.Packet, 1), errors: make(chan error)}
+func TestForwardsTimeoutBatch(t *testing.T) {
+	engine := &fakeEngine{batches: make(chan domain.CapturedBatch, 1), errors: make(chan error)}
 	reporter := &fakeReporter{}
 	service := NewService("worker-1", map[string]string{"A": "eth0"}, engine, reporter, nil, 64, 5*time.Millisecond, 0)
 	if err := service.Start(context.Background(), StartRequest{SessionID: "s1", LogicalInterface: "A", Snaplen: 256}); err != nil {
 		t.Fatal(err)
 	}
-	engine.packets <- domain.Packet{SequenceNumber: 1}
+	engine.batches <- domain.CapturedBatch{Packets: []domain.Packet{{SequenceNumber: 1}}, StartedAt: time.Now().Add(-5 * time.Millisecond), FlushReason: "timeout"}
 	time.Sleep(30 * time.Millisecond)
 	reporter.mu.Lock()
 	defer reporter.mu.Unlock()
@@ -143,16 +142,15 @@ func TestBatchFlushesAfterDelay(t *testing.T) {
 }
 
 func TestReportsPacketCountPerInterface(t *testing.T) {
-	engine := &fakeEngine{packets: make(chan domain.Packet, 2), errors: make(chan error)}
+	engine := &fakeEngine{batches: make(chan domain.CapturedBatch, 1), errors: make(chan error)}
 	reporter := &fakeReporter{}
 	progress := &fakeProgressReporter{}
 	service := NewService("worker-1", map[string]string{"A": "bond1"}, engine, reporter, progress, 64, time.Hour, 5*time.Millisecond)
 	if err := service.Start(context.Background(), StartRequest{SessionID: "s1", LogicalInterface: "A", Snaplen: 256}); err != nil {
 		t.Fatal(err)
 	}
-	engine.packets <- domain.Packet{CapturedLength: 40, SequenceNumber: 1}
-	engine.packets <- domain.Packet{CapturedLength: 60, SequenceNumber: 2}
-	close(engine.packets)
+	engine.batches <- domain.CapturedBatch{Packets: []domain.Packet{{CapturedLength: 40, SequenceNumber: 1}, {CapturedLength: 60, SequenceNumber: 2}}, CapturedBytes: 100, StartedAt: time.Now(), FlushReason: "capture_end"}
+	close(engine.batches)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		progress.mu.Lock()

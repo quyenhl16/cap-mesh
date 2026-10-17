@@ -283,12 +283,15 @@ hơn environment.
 | `CAPMESH_SERVER_METRICS_LISTEN` | `--metrics-listen` | `:19090` | Endpoint Prometheus metrics của server. |
 | `CAPMESH_TLS_CERT` | `--tls-cert` | `/var/run/capmesh/tls/tls.crt` | Server certificate. |
 | `CAPMESH_TLS_KEY` | `--tls-key` | `/var/run/capmesh/tls/tls.key` | Server private key. |
-| `CAPMESH_SUBSCRIBER_QUEUE_SIZE` | `--subscriber-queue-size` | `10000` | Queue packet riêng cho mỗi subscriber. |
+| `CAPMESH_SUBSCRIBER_QUEUE_SIZE` | `--subscriber-queue-size` | `256` | Queue immutable batch riêng cho mỗi subscriber. |
+| `CAPMESH_SERVER_REBATCH_MAX_PACKETS` | `--rebatch-max-packets` | `256` | Số packet tối đa trong batch sau reorder. |
+| `CAPMESH_SERVER_REBATCH_MAX_BYTES` | `--rebatch-max-bytes` | `1048576` | Số captured byte tối đa trong batch sau reorder. |
+| `CAPMESH_SERVER_REBATCH_MAX_DELAY` | `--rebatch-max-delay` | `1ms` | Thời gian tối đa bổ sung để gom packet sau reorder. |
 | `CAPMESH_RECORD_DIR` | `--record-dir` | `/app/captures` | Root lưu PCAPNG, log và recovery metadata; rỗng sẽ tắt recording. |
 | `CAPMESH_RECORD_SEGMENT_SIZE` | `--record-segment-size` | `10MiB` | Kích thước tối đa mỗi PCAP/log segment; `0` tắt rotation. |
 | `CAPMESH_RECORD_MAX_SESSION_SIZE` | `--record-max-session-size` | `10GiB` | Giới hạn mỗi normal session; đồng thời là rolling retention cho continuous packet/log. `0` là không giới hạn. |
 | `CAPMESH_RECORD_MAX_NORMAL_TOTAL_SIZE` | `--record-max-normal-total-size` | `50GiB` | Tổng quota các thư mục normal session; `0` tắt quota và cleanup API. |
-| `CAPMESH_RECORD_QUEUE_SIZE` | `--record-queue-size` | `65536` | Queue packet/log dùng cho recording. |
+| `CAPMESH_RECORD_QUEUE_SIZE` | `--record-queue-size` | `256` | Queue batch/log dùng cho recording. |
 | `CAPMESH_WORKLOAD_RECONCILE_INTERVAL` | `--workload-reconcile-interval` | `5s` | Chu kỳ tìm lại Pod/Calico endpoint và reconcile workload. |
 
 Các biến token của server:
@@ -311,6 +314,9 @@ Các biến token của server:
 | `CAPMESH_INSECURE` | `--insecure` | `false` | Tắt TLS; chỉ dùng cho local development. |
 | `CAPMESH_DUMPCAP` | `--dumpcap` | `dumpcap` | Đường dẫn binary dumpcap. |
 | `CAPMESH_AGENT_METRICS_LISTEN` | `--metrics-listen` | `:19091` | Endpoint Prometheus metrics của agent. |
+| `CAPMESH_AGENT_BATCH_MAX_PACKETS` | `--batch-max-packets` | `256` | Số packet tối đa trong một capture batch. |
+| `CAPMESH_AGENT_BATCH_MAX_BYTES` | `--batch-max-bytes` | `1048576` | Số captured byte tối đa trong một capture batch. |
+| `CAPMESH_AGENT_BATCH_MAX_DELAY` | `--batch-max-delay` | `1ms` | Thời gian tối đa để tạo một capture batch. |
 | `CAPMESH_CAPTURE_LOG_INTERVAL` | `--capture-log-interval` | `10s` | Chu kỳ log số packet/interface; `0` để tắt. |
 | `CAPMESH_INTERFACES_FROM_KUBERNETES` | `--interfaces-from-kubernetes` | `true` | Đọc mapping từ Node annotation. |
 | `CAPMESH_INTERFACES` | `--interface` | Rỗng | Danh sách mapping `alias=physical`, có thể lặp lại. |

@@ -14,6 +14,13 @@ type Service struct {
 	mu        sync.RWMutex
 	pipelines map[string]*pipeline
 	metrics   ports.Metrics
+	rebatch   RebatchConfig
+}
+
+type RebatchConfig struct {
+	MaxPackets int
+	MaxBytes   int
+	MaxDelay   time.Duration
 }
 
 type pipeline struct {
@@ -28,6 +35,7 @@ type pipeline struct {
 	wake        chan struct{}
 	done        chan struct{}
 	metrics     ports.Metrics
+	rebatch     RebatchConfig
 }
 
 type subscriber struct {
@@ -37,7 +45,20 @@ type subscriber struct {
 }
 
 func NewService(metrics ports.Metrics) *Service {
-	return &Service{pipelines: make(map[string]*pipeline), metrics: metrics}
+	return NewServiceWithRebatch(metrics, RebatchConfig{MaxPackets: 256, MaxBytes: 1024 * 1024, MaxDelay: time.Millisecond})
+}
+
+func NewServiceWithRebatch(metrics ports.Metrics, config RebatchConfig) *Service {
+	if config.MaxPackets < 1 {
+		config.MaxPackets = 1
+	}
+	if config.MaxBytes < 1 {
+		config.MaxBytes = 1
+	}
+	if config.MaxDelay < 0 {
+		config.MaxDelay = 0
+	}
+	return &Service{pipelines: make(map[string]*pipeline), metrics: metrics, rebatch: config}
 }
 
 func (s *Service) OpenSession(id string, window time.Duration, queueSize int) error {
@@ -49,7 +70,7 @@ func (s *Service) OpenSession(id string, window time.Duration, queueSize int) er
 	if queueSize < 1 {
 		queueSize = 1
 	}
-	p := &pipeline{window: window, queueSize: queueSize, subscribers: make(map[uint64]*subscriber), wake: make(chan struct{}, 1), done: make(chan struct{}), metrics: s.metrics}
+	p := &pipeline{window: window, queueSize: queueSize, subscribers: make(map[uint64]*subscriber), wake: make(chan struct{}, 1), done: make(chan struct{}), metrics: s.metrics, rebatch: s.rebatch}
 	heap.Init(&p.packets)
 	s.pipelines[id] = p
 	go p.run()
@@ -150,36 +171,74 @@ func (p *pipeline) run() {
 	for {
 		select {
 		case <-ticker.C:
-			p.emitUntil(time.Now().Add(-p.window), false)
+			now := time.Now()
+			p.emitUntil(now.Add(-p.window), now.Add(-p.rebatch.MaxDelay), false)
 		case <-p.wake:
-			p.emitUntil(time.Now().Add(-p.window), false)
+			now := time.Now()
+			p.emitUntil(now.Add(-p.window), now.Add(-p.rebatch.MaxDelay), false)
 		case <-p.done:
 			return
 		}
 	}
 }
 
-func (p *pipeline) emitUntil(cutoff time.Time, all bool) {
+func (p *pipeline) emitUntil(timestampCutoff, receivedCutoff time.Time, all bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for p.packets.Len() > 0 {
-		item := p.packets[0]
-		packet := item.batch.Packets[0]
-		if !all && packet.Timestamp.After(cutoff) {
+		first := p.packets[0]
+		if !all && (first.packet.Timestamp.After(timestampCutoff) || first.receivedAt.After(receivedCutoff)) {
 			break
 		}
-		heap.Pop(&p.packets)
-		p.metrics.AddReorderBuffer(-1)
-		p.metrics.ObserveReorderWait(packet.SequenceNumber, time.Since(item.receivedAt))
-		p.lastEmitted = packet.Timestamp
+		batch := first.template
+		batch.Packets = make([]domain.Packet, 0, min(p.packets.Len(), p.rebatch.MaxPackets))
+		batchBytes := 0
+		batchStarted := first.receivedAt
+		reason := "watermark"
+		for p.packets.Len() > 0 {
+			item := p.packets[0]
+			if !all && (item.packet.Timestamp.After(timestampCutoff) || item.receivedAt.After(receivedCutoff)) {
+				break
+			}
+			if !sameBatchStream(batch, item.template) {
+				break
+			}
+			packetBytes := int(item.packet.CapturedLength)
+			if len(batch.Packets) > 0 && (len(batch.Packets) >= p.rebatch.MaxPackets || batchBytes+packetBytes > p.rebatch.MaxBytes) {
+				if len(batch.Packets) >= p.rebatch.MaxPackets {
+					reason = "packets"
+				} else {
+					reason = "bytes"
+				}
+				break
+			}
+			heap.Pop(&p.packets)
+			p.metrics.AddReorderBuffer(-1)
+			p.metrics.ObserveReorderWait(item.packet.SequenceNumber, time.Since(item.receivedAt))
+			batch.Packets = append(batch.Packets, item.packet)
+			batchBytes += packetBytes
+			p.lastEmitted = item.packet.Timestamp
+			if len(batch.Packets) >= p.rebatch.MaxPackets || batchBytes >= p.rebatch.MaxBytes {
+				if len(batch.Packets) >= p.rebatch.MaxPackets {
+					reason = "packets"
+				} else {
+					reason = "bytes"
+				}
+				break
+			}
+		}
+		if all && reason == "watermark" {
+			reason = "shutdown"
+		}
+		p.metrics.ObserveRebatch(len(batch.Packets), batchBytes, time.Since(batchStarted), reason)
 		fanoutStarted := time.Now()
 		deliveries := 0
 		for id, subscriber := range p.subscribers {
 			select {
-			case subscriber.batches <- item.batch.Clone():
+			case subscriber.batches <- batch:
 				deliveries++
 			default:
-				p.metrics.SubscriberDrop()
+				p.metrics.SubscriberDrop(len(batch.Packets))
 				if subscriber.disconnectOnDrop {
 					close(subscriber.dropped)
 					close(subscriber.batches)
@@ -191,8 +250,12 @@ func (p *pipeline) emitUntil(cutoff time.Time, all bool) {
 			p.metrics.ObserveSubscriberQueue(float64(len(subscriber.batches)) / float64(cap(subscriber.batches)))
 		}
 		p.metrics.ObserveFanout(time.Since(fanoutStarted), deliveries)
-		p.metrics.PacketsEmitted(1)
+		p.metrics.PacketsEmitted(len(batch.Packets))
 	}
+}
+
+func sameBatchStream(left, right domain.PacketBatch) bool {
+	return left.SessionID == right.SessionID && left.NodeName == right.NodeName && left.InterfaceName == right.InterfaceName && left.Source == right.Source
 }
 
 func (p *pipeline) removeSubscriber(id uint64) {
@@ -206,7 +269,7 @@ func (p *pipeline) removeSubscriber(id uint64) {
 }
 
 func (p *pipeline) close() {
-	p.emitUntil(time.Time{}, true)
+	p.emitUntil(time.Time{}, time.Time{}, true)
 	p.mu.Lock()
 	if !p.closed {
 		p.closed = true

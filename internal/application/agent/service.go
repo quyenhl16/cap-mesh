@@ -30,6 +30,7 @@ type Service struct {
 	metrics           ports.AgentPipelineMetrics
 	interfaceResolver ports.PodInterfaceResolver
 	batchMaxPackets   int
+	batchMaxBytes     int
 	batchMaxDelay     time.Duration
 	progressInterval  time.Duration
 	captures          map[string]map[string]context.CancelFunc
@@ -43,8 +44,14 @@ func (s *Service) SetMetrics(metrics ports.AgentPipelineMetrics) {
 	s.metrics = metrics
 }
 
+func (s *Service) SetBatchMaxBytes(maxBytes int) {
+	if maxBytes > 0 {
+		s.batchMaxBytes = maxBytes
+	}
+}
+
 func NewService(nodeName string, interfaces map[string]string, engine ports.CaptureEngine, reporter ports.AgentReporter, progress ports.CaptureProgressReporter, maxPackets int, maxDelay, progressInterval time.Duration) *Service {
-	return &Service{nodeName: nodeName, interfaces: interfaces, engine: engine, reporter: reporter, progress: progress, batchMaxPackets: maxPackets, batchMaxDelay: maxDelay, progressInterval: progressInterval, captures: make(map[string]map[string]context.CancelFunc)}
+	return &Service{nodeName: nodeName, interfaces: interfaces, engine: engine, reporter: reporter, progress: progress, batchMaxPackets: maxPackets, batchMaxBytes: 1024 * 1024, batchMaxDelay: maxDelay, progressInterval: progressInterval, captures: make(map[string]map[string]context.CancelFunc)}
 }
 
 func (s *Service) Start(parent context.Context, request StartRequest) error {
@@ -99,14 +106,22 @@ func (s *Service) Start(parent context.Context, request StartRequest) error {
 	sources[source.ID] = cancel
 	s.mu.Unlock()
 
-	packets, captureErrors, err := s.engine.Capture(ctx, iface, request.Filter, request.Snaplen)
+	batches, captureErrors, err := s.engine.Capture(ctx, ports.CaptureRequest{InterfaceName: iface, Filter: request.Filter, Snaplen: request.Snaplen, MaxPackets: s.batchMaxPackets, MaxBytes: s.batchMaxBytes, MaxDelay: s.batchMaxDelay})
 	if err != nil {
 		s.remove(request.SessionID, source.ID)
 		cancel()
 		return err
 	}
-	go s.batch(ctx, request.SessionID, source, packets, captureErrors)
-	return s.reporter.SendStatus(parent, request.SessionID, source.ID, "RUNNING", "")
+	if err := s.reporter.SendStatus(parent, request.SessionID, source.ID, "RUNNING", ""); err != nil {
+		cancel()
+		s.remove(request.SessionID, source.ID)
+		return err
+	}
+	go func() {
+		defer cancel()
+		s.forwardBatches(ctx, request.SessionID, source, batches, captureErrors)
+	}()
+	return nil
 }
 
 func (s *Service) Stop(ctx context.Context, sessionID, sourceID string) error {
@@ -143,7 +158,7 @@ func (s *Service) StopAll() {
 	}
 }
 
-func (s *Service) batch(ctx context.Context, sessionID string, source domain.CaptureSource, packets <-chan domain.Packet, captureErrors <-chan error) {
+func (s *Service) forwardBatches(ctx context.Context, sessionID string, source domain.CaptureSource, batches <-chan domain.CapturedBatch, captureErrors <-chan error) {
 	defer s.remove(sessionID, source.ID)
 	startedAt := time.Now()
 	lastReportAt := startedAt
@@ -179,65 +194,48 @@ func (s *Service) batch(ctx context.Context, sessionID string, source domain.Cap
 		progressC = progressTicker.C
 		defer progressTicker.Stop()
 	}
-	timer := time.NewTimer(s.batchMaxDelay)
-	if !timer.Stop() {
-		<-timer.C
-	}
-	var batch []domain.Packet
-	var batchStarted time.Time
-	var batchBytes int
 	errorsChannel := captureErrors
-	flush := func(reason string) error {
-		if len(batch) == 0 {
-			return nil
-		}
-		if s.metrics != nil {
-			s.metrics.ObserveBatch(len(batch), batchBytes, time.Since(batchStarted), reason)
-		}
-		out := domain.PacketBatch{SessionID: sessionID, NodeName: s.nodeName, InterfaceName: source.InterfaceName, Source: source, Packets: batch}
-		batch = nil
-		batchStarted = time.Time{}
-		batchBytes = 0
-		return s.reporter.SendBatch(ctx, out)
-	}
 	for {
-		var timerC <-chan time.Time
-		if len(batch) > 0 {
-			timerC = timer.C
-		}
 		select {
 		case <-ctx.Done():
-			_ = flush("shutdown")
 			return
-		case packet, ok := <-packets:
+		case batch, ok := <-batches:
 			if !ok {
-				_ = flush("capture_end")
+				select {
+				case err, ok := <-errorsChannel:
+					if ok && err != nil && !errors.Is(err, context.Canceled) {
+						_ = s.reporter.SendStatus(context.Background(), sessionID, source.ID, "FAILED", err.Error())
+					}
+				default:
+				}
 				return
 			}
-			if len(batch) == 0 {
-				batchStarted = time.Now()
-				timer.Reset(s.batchMaxDelay)
+			if len(batch.Packets) == 0 {
+				continue
 			}
-			packetsTotal++
-			bytesTotal += uint64(packet.CapturedLength)
-			packetsInterval++
-			bytesInterval += uint64(packet.CapturedLength)
-			batch = append(batch, packet)
-			batchBytes += int(packet.CapturedLength)
-			if len(batch) >= s.batchMaxPackets {
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				if err := flush("size"); err != nil {
-					_ = s.reporter.SendStatus(context.Background(), sessionID, source.ID, "FAILED", err.Error())
-					return
+			batchBytes := batch.CapturedBytes
+			if batchBytes == 0 {
+				for _, packet := range batch.Packets {
+					batchBytes += int(packet.CapturedLength)
 				}
 			}
-		case <-timerC:
-			if err := flush("timeout"); err != nil {
+			packetsTotal += uint64(len(batch.Packets))
+			bytesTotal += uint64(batchBytes)
+			packetsInterval += uint64(len(batch.Packets))
+			bytesInterval += uint64(batchBytes)
+			if s.metrics != nil {
+				age := batch.BuildDuration
+				if age <= 0 && !batch.StartedAt.IsZero() {
+					age = time.Since(batch.StartedAt)
+				}
+				reason := batch.FlushReason
+				if reason == "" {
+					reason = "engine"
+				}
+				s.metrics.ObserveBatch(len(batch.Packets), batchBytes, age, reason)
+			}
+			out := domain.PacketBatch{SessionID: sessionID, NodeName: s.nodeName, InterfaceName: source.InterfaceName, Source: source, Packets: batch.Packets}
+			if err := s.reporter.SendBatch(ctx, out); err != nil {
 				_ = s.reporter.SendStatus(context.Background(), sessionID, source.ID, "FAILED", err.Error())
 				return
 			}
@@ -251,7 +249,6 @@ func (s *Service) batch(ctx context.Context, sessionID string, source domain.Cap
 			if err != nil && !errors.Is(err, context.Canceled) {
 				_ = s.reporter.SendStatus(context.Background(), sessionID, source.ID, "FAILED", err.Error())
 			}
-			_ = flush("error")
 			return
 		}
 	}

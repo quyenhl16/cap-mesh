@@ -19,6 +19,16 @@ type PacketBatch struct {
 	Packets       []Packet
 }
 
+// CapturedBatch is owned by the capture pipeline. Packets and their payloads
+// must not be mutated after the batch is published to a consumer.
+type CapturedBatch struct {
+	Packets       []Packet
+	CapturedBytes int
+	StartedAt     time.Time
+	BuildDuration time.Duration
+	FlushReason   string
+}
+
 func (b PacketBatch) Clone() PacketBatch {
 	out := b
 	out.Packets = make([]Packet, len(b.Packets))

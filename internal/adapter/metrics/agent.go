@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,46 +11,56 @@ import (
 )
 
 type Agent struct {
-	inner             ports.AgentReporter
-	captured          prometheus.Counter
-	dropped           prometheus.Counter
-	captureErrors     prometheus.Counter
-	captureQueueDepth prometheus.Gauge
-	captureQueueCap   prometheus.Gauge
-	sent              prometheus.Counter
-	batches           prometheus.Counter
-	batchPackets      prometheus.Histogram
-	batchBytes        prometheus.Histogram
-	batchAge          prometheus.Histogram
-	batchFlushes      *prometheus.CounterVec
-	streamErrors      prometheus.Counter
-	streamReconnects  prometheus.Counter
-	transportDuration *prometheus.HistogramVec
-	transportMessages *prometheus.CounterVec
-	capturedBytes     prometheus.Counter
+	inner               ports.AgentReporter
+	captured            prometheus.Counter
+	dropped             prometheus.Counter
+	captureErrors       prometheus.Counter
+	captureQueueDepth   prometheus.Gauge
+	captureQueueCap     prometheus.Gauge
+	sent                prometheus.Counter
+	batches             prometheus.Counter
+	batchPackets        prometheus.Histogram
+	batchBytes          prometheus.Histogram
+	batchAge            prometheus.Histogram
+	batchFlushes        *prometheus.CounterVec
+	streamErrors        prometheus.Counter
+	streamReconnects    prometheus.Counter
+	transportDuration   *prometheus.HistogramVec
+	transportMessages   *prometheus.CounterVec
+	capturedBytes       prometheus.Counter
+	outboundQueueDepth  prometheus.Gauge
+	outboundQueueCap    prometheus.Gauge
+	outboundOverflows   prometheus.Counter
+	outboundDropped     prometheus.Counter
+	outboundDisconnects prometheus.Counter
 }
 
 func NewAgent(registerer prometheus.Registerer, inner ports.AgentReporter) *Agent {
 	a := &Agent{
-		inner:             inner,
-		captured:          prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_packets_captured_total", Help: "Packets read from the capture engine."}),
-		dropped:           prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_packets_dropped_total", Help: "Packets reported dropped by the capture engine when statistics are available."}),
-		captureErrors:     prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_capture_errors_total", Help: "Errors reported by the capture engine."}),
-		captureQueueDepth: prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_capture_queue_depth", Help: "Packets currently waiting between the capture engine and batch builder."}),
-		captureQueueCap:   prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_capture_queue_capacity", Help: "Capacity of the queue between the capture engine and batch builder."}),
-		sent:              prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_packets_sent_total", Help: "Packets accepted by the outbound agent reporter."}),
-		batches:           prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_batches_sent_total", Help: "Packet batches accepted by the outbound agent reporter."}),
-		batchPackets:      prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_agent_batch_packets", Help: "Packets per agent batch.", Buckets: prometheus.ExponentialBuckets(1, 2, 11)}),
-		batchBytes:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_agent_batch_bytes", Help: "Captured bytes per agent batch.", Buckets: prometheus.ExponentialBuckets(1024, 2, 13)}),
-		batchAge:          prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_agent_batch_age_seconds", Help: "Time from the first packet entering a batch until the batch is flushed.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}),
-		batchFlushes:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "capmesh_agent_batch_flush_total", Help: "Agent batches flushed by reason."}, []string{"reason"}),
-		streamErrors:      prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_stream_errors_total", Help: "Errors queueing or sending agent stream messages."}),
-		streamReconnects:  prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_stream_reconnects_total", Help: "Agent stream connections that ended and required reconnecting."}),
-		transportDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "capmesh_agent_grpc_send_duration_seconds", Help: "Time spent sending messages on the agent gRPC stream.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}, []string{"type"}),
-		transportMessages: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "capmesh_agent_grpc_messages_total", Help: "Messages sent on the agent gRPC stream."}, []string{"type", "result"}),
-		capturedBytes:     prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_capture_bytes_total", Help: "Captured packet bytes."}),
+		inner:               inner,
+		captured:            prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_packets_captured_total", Help: "Packets read from the capture engine."}),
+		dropped:             prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_packets_dropped_total", Help: "Packets reported dropped by the capture engine when statistics are available."}),
+		captureErrors:       prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_capture_errors_total", Help: "Errors reported by the capture engine."}),
+		captureQueueDepth:   prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_capture_queue_depth", Help: "Immutable batches waiting between the capture engine and agent pipeline."}),
+		captureQueueCap:     prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_capture_queue_capacity", Help: "Capacity of the bounded queue between the capture engine and agent pipeline."}),
+		sent:                prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_packets_sent_total", Help: "Packets accepted by the outbound agent reporter."}),
+		batches:             prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_batches_sent_total", Help: "Packet batches accepted by the outbound agent reporter."}),
+		batchPackets:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_agent_batch_packets", Help: "Packets per agent batch.", Buckets: prometheus.ExponentialBuckets(1, 2, 11)}),
+		batchBytes:          prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_agent_batch_bytes", Help: "Captured bytes per agent batch.", Buckets: prometheus.ExponentialBuckets(1024, 2, 13)}),
+		batchAge:            prometheus.NewHistogram(prometheus.HistogramOpts{Name: "capmesh_agent_batch_age_seconds", Help: "Time from the first packet entering a batch until the batch is flushed.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}),
+		batchFlushes:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "capmesh_agent_batch_flush_total", Help: "Agent batches flushed by reason."}, []string{"reason"}),
+		streamErrors:        prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_stream_errors_total", Help: "Errors queueing or sending agent stream messages."}),
+		streamReconnects:    prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_stream_reconnects_total", Help: "Agent stream connections that ended and required reconnecting."}),
+		transportDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "capmesh_agent_grpc_send_duration_seconds", Help: "Time spent sending messages on the agent gRPC stream.", Buckets: prometheus.ExponentialBuckets(10e-6, 2, 18)}, []string{"type"}),
+		transportMessages:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "capmesh_agent_grpc_messages_total", Help: "Messages sent on the agent gRPC stream."}, []string{"type", "result"}),
+		capturedBytes:       prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_capture_bytes_total", Help: "Captured packet bytes."}),
+		outboundQueueDepth:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_outbound_queue_depth", Help: "Batches and status messages waiting for the gRPC stream."}),
+		outboundQueueCap:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_outbound_queue_capacity", Help: "Capacity of the bounded gRPC outbound queue."}),
+		outboundOverflows:   prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_outbound_queue_overflows_total", Help: "Capture batches dropped because the bounded gRPC outbound queue was full."}),
+		outboundDropped:     prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_outbound_dropped_packets_total", Help: "Packets dropped because the bounded gRPC outbound queue was full."}),
+		outboundDisconnects: prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_outbound_disconnect_dropped_batches_total", Help: "Queued capture batches discarded when the gRPC stream disconnected."}),
 	}
-	registerer.MustRegister(a.captured, a.dropped, a.captureErrors, a.captureQueueDepth, a.captureQueueCap, a.sent, a.batches, a.batchPackets, a.batchBytes, a.batchAge, a.batchFlushes, a.streamErrors, a.streamReconnects, a.transportDuration, a.transportMessages, a.capturedBytes)
+	registerer.MustRegister(a.captured, a.dropped, a.captureErrors, a.captureQueueDepth, a.captureQueueCap, a.sent, a.batches, a.batchPackets, a.batchBytes, a.batchAge, a.batchFlushes, a.streamErrors, a.streamReconnects, a.transportDuration, a.transportMessages, a.capturedBytes, a.outboundQueueDepth, a.outboundQueueCap, a.outboundOverflows, a.outboundDropped, a.outboundDisconnects)
 	return a
 }
 
@@ -67,6 +78,11 @@ func (a *Agent) ObserveBatch(packets, bytes int, age time.Duration, reason strin
 
 func (a *Agent) SendBatch(ctx context.Context, batch domain.PacketBatch) error {
 	err := a.inner.SendBatch(ctx, batch)
+	if errors.Is(err, ports.ErrQueueFull) {
+		a.outboundOverflows.Inc()
+		a.outboundDropped.Add(float64(len(batch.Packets)))
+		return nil
+	}
 	if err != nil {
 		a.streamErrors.Inc()
 		return err
@@ -96,6 +112,16 @@ func (a *Agent) ObserveTransportSend(messageType string, duration time.Duration,
 
 func (a *Agent) StreamReconnect() { a.streamReconnects.Inc() }
 
+func (a *Agent) ObserveOutboundQueue(depth, capacity int) {
+	a.outboundQueueDepth.Set(float64(depth))
+	a.outboundQueueCap.Set(float64(capacity))
+}
+
+func (a *Agent) ObserveOutboundDiscard(packets int) {
+	a.outboundDisconnects.Inc()
+	a.outboundDropped.Add(float64(packets))
+}
+
 type CaptureEngine struct {
 	inner   ports.CaptureEngine
 	metrics *Agent
@@ -105,39 +131,50 @@ func NewCaptureEngine(inner ports.CaptureEngine, metrics *Agent) *CaptureEngine 
 	return &CaptureEngine{inner: inner, metrics: metrics}
 }
 
-func (e *CaptureEngine) Capture(ctx context.Context, iface, filter string, snaplen uint32) (<-chan domain.Packet, <-chan error, error) {
-	in, captureErrors, err := e.inner.Capture(ctx, iface, filter, snaplen)
+func (e *CaptureEngine) Capture(ctx context.Context, request ports.CaptureRequest) (<-chan domain.CapturedBatch, <-chan error, error) {
+	in, captureErrors, err := e.inner.Capture(ctx, request)
 	if err != nil {
 		e.metrics.captureErrors.Inc()
 		return nil, nil, err
 	}
-	out := make(chan domain.Packet, 256)
+	out := make(chan domain.CapturedBatch, 16)
 	errorsOut := make(chan error, 1)
 	e.metrics.captureQueueCap.Set(float64(cap(out)))
 	go func() {
 		defer close(out)
-		defer e.metrics.captureQueueDepth.Set(0)
-		for packet := range in {
-			e.metrics.ObserveCaptured(packet)
-			select {
-			case out <- packet:
-				e.metrics.captureQueueDepth.Set(float64(len(out)))
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	go func() {
 		defer close(errorsOut)
-		if captureErrors == nil {
-			return
-		}
-		for captureError := range captureErrors {
-			if captureError != nil {
-				e.metrics.captureErrors.Inc()
-			}
+		defer e.metrics.captureQueueDepth.Set(0)
+		batches := in
+		errorsChannel := captureErrors
+		for batches != nil || errorsChannel != nil {
 			select {
-			case errorsOut <- captureError:
+			case batch, ok := <-batches:
+				if !ok {
+					batches = nil
+					continue
+				}
+				for _, packet := range batch.Packets {
+					e.metrics.ObserveCaptured(packet)
+				}
+				select {
+				case out <- batch:
+					e.metrics.captureQueueDepth.Set(float64(len(out)))
+				case <-ctx.Done():
+					return
+				}
+			case captureError, ok := <-errorsChannel:
+				if !ok {
+					errorsChannel = nil
+					continue
+				}
+				if captureError != nil {
+					e.metrics.captureErrors.Inc()
+				}
+				select {
+				case errorsOut <- captureError:
+				case <-ctx.Done():
+					return
+				}
 			case <-ctx.Done():
 				return
 			}

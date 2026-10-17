@@ -13,6 +13,7 @@ var (
 	ErrNotFound      = errors.New("not found")
 	ErrAlreadyExists = errors.New("already exists")
 	ErrUnavailable   = errors.New("unavailable")
+	ErrQueueFull     = errors.New("queue full")
 )
 
 type RecordingCapacityExceededError struct {
@@ -114,21 +115,31 @@ type Metrics interface {
 	BatchReceived(int, int)
 	SequenceGap(uint64)
 	LatePacket()
-	SubscriberDrop()
+	SubscriberDrop(int)
 	AddReorderBuffer(int)
 	ObserveReorderWait(uint64, time.Duration)
 	SubscriberAdded()
 	SubscriberRemoved()
 	ObserveFanout(time.Duration, int)
 	ObserveSubscriberQueue(float64)
+	ObserveRebatch(int, int, time.Duration, string)
 }
 
 type AgentPipelineMetrics interface {
 	ObserveBatch(int, int, time.Duration, string)
 }
 
+type CaptureRequest struct {
+	InterfaceName string
+	Filter        string
+	Snaplen       uint32
+	MaxPackets    int
+	MaxBytes      int
+	MaxDelay      time.Duration
+}
+
 type CaptureEngine interface {
-	Capture(context.Context, string, string, uint32) (<-chan domain.Packet, <-chan error, error)
+	Capture(context.Context, CaptureRequest) (<-chan domain.CapturedBatch, <-chan error, error)
 }
 
 type AgentReporter interface {

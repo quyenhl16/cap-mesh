@@ -450,11 +450,12 @@ func (r *sessionRecorder) run() {
 				}
 				return
 			}
-			if err := r.writeBatch(batch); err != nil {
+			limitReached, err := r.writeBatch(batch)
+			if err != nil {
 				r.complete("FAILED", err.Error(), true)
 				return
 			}
-			if !r.rolling && r.reachedSessionLimit() {
+			if limitReached {
 				r.metadata.Truncated = true
 				r.complete("TRUNCATED", "max_session_size_reached", false)
 				return
@@ -508,12 +509,8 @@ func (r *sessionRecorder) observeQueue() {
 	}
 }
 
-func (r *sessionRecorder) writeBatch(batch domain.PacketBatch) (err error) {
+func (r *sessionRecorder) writeBatch(batch domain.PacketBatch) (limitReached bool, err error) {
 	started := time.Now()
-	bytesBefore := int64(0)
-	if r.writer != nil {
-		bytesBefore = r.writer.BytesWritten()
-	}
 	defer func() {
 		if r.metrics == nil {
 			return
@@ -523,26 +520,40 @@ func (r *sessionRecorder) writeBatch(batch domain.PacketBatch) (err error) {
 			r.metrics.writeErrors.Inc()
 		}
 	}()
-	if err = r.writer.WriteBatch(batch); err != nil {
-		return err
-	}
 	var capturedBytes uint64
-	for _, packet := range batch.Packets {
+	var writtenBytes int64
+	writtenPackets := 0
+	for index, packet := range batch.Packets {
+		bytesBefore := r.writer.BytesWritten()
+		if err = r.writer.WritePacket(batch, packet); err != nil {
+			return false, err
+		}
+		writtenBytes += r.writer.BytesWritten() - bytesBefore
+		writtenPackets++
 		r.segmentPkts++
 		r.metadata.PacketCount++
 		r.segmentBytes += uint64(packet.CapturedLength)
 		r.metadata.CapturedBytes += uint64(packet.CapturedLength)
 		capturedBytes += uint64(packet.CapturedLength)
-	}
-	if r.metrics != nil {
-		r.metrics.packets.Add(float64(len(batch.Packets)))
-		r.metrics.capturedBytes.Add(float64(capturedBytes))
-		r.metrics.batchPackets.Observe(float64(len(batch.Packets)))
-		if r.writer != nil {
-			r.metrics.writeBytes.Add(float64(r.writer.BytesWritten() - bytesBefore))
+		if !r.rolling && r.reachedSessionLimit() {
+			limitReached = true
+			break
+		}
+		if index < len(batch.Packets)-1 && r.reachedSegmentLimit() {
+			if err = r.rotate(); err != nil {
+				return false, err
+			}
 		}
 	}
-	return nil
+	if r.metrics != nil {
+		r.metrics.packets.Add(float64(writtenPackets))
+		r.metrics.capturedBytes.Add(float64(capturedBytes))
+		r.metrics.batchPackets.Observe(float64(writtenPackets))
+		if writtenBytes > 0 {
+			r.metrics.writeBytes.Add(float64(writtenBytes))
+		}
+	}
+	return limitReached, nil
 }
 
 func (r *sessionRecorder) openSegment() error {
