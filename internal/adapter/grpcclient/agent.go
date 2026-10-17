@@ -66,10 +66,28 @@ type AgentTransport struct {
 	client   capmeshv1.AgentServiceClient
 	reporter *Reporter
 	token    string
+	metrics  interface {
+		ObserveTransportSend(string, time.Duration, error)
+	}
 }
 
 func NewAgentTransport(connection *grpc.ClientConn, reporter *Reporter, token string) *AgentTransport {
 	return &AgentTransport{client: capmeshv1.NewAgentServiceClient(connection), reporter: reporter, token: token}
+}
+
+func (t *AgentTransport) SetMetrics(metrics interface {
+	ObserveTransportSend(string, time.Duration, error)
+}) {
+	t.metrics = metrics
+}
+
+func (t *AgentTransport) send(stream capmeshv1.AgentService_ConnectClient, messageType string, message *capmeshv1.AgentMessage) error {
+	started := time.Now()
+	err := stream.Send(message)
+	if t.metrics != nil {
+		t.metrics.ObserveTransportSend(messageType, time.Since(started), err)
+	}
+	return err
 }
 
 func (t *AgentTransport) Connect(ctx context.Context, node string, interfaces map[string]string, handle func(*capmeshv1.AgentCommand) error) error {
@@ -77,7 +95,7 @@ func (t *AgentTransport) Connect(ctx context.Context, node string, interfaces ma
 	if err != nil {
 		return err
 	}
-	if err := stream.Send(&capmeshv1.AgentMessage{Register: &capmeshv1.RegisterAgent{NodeName: node, Interfaces: interfaces}}); err != nil {
+	if err := t.send(stream, "register", &capmeshv1.AgentMessage{Register: &capmeshv1.RegisterAgent{NodeName: node, Interfaces: interfaces}}); err != nil {
 		return err
 	}
 	t.reporter.setConnected(true)
@@ -104,7 +122,11 @@ func (t *AgentTransport) Connect(ctx context.Context, node string, interfaces ma
 	for {
 		select {
 		case message := <-t.reporter.outbound:
-			if err := stream.Send(message); err != nil {
+			messageType := "status"
+			if message.GetBatch() != nil {
+				messageType = "batch"
+			}
+			if err := t.send(stream, messageType, message); err != nil {
 				return err
 			}
 		case command := <-incoming:
@@ -114,7 +136,7 @@ func (t *AgentTransport) Connect(ctx context.Context, node string, interfaces ma
 				}
 			}
 		case <-heartbeat.C:
-			if err := stream.Send(&capmeshv1.AgentMessage{Heartbeat: &capmeshv1.Heartbeat{TimestampNs: time.Now().UnixNano()}}); err != nil {
+			if err := t.send(stream, "heartbeat", &capmeshv1.AgentMessage{Heartbeat: &capmeshv1.Heartbeat{TimestampNs: time.Now().UnixNano()}}); err != nil {
 				return err
 			}
 		case err := <-receiveErrors:

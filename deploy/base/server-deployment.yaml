@@ -34,6 +34,8 @@ spec:
               containerPort: 18443
             - name: metrics
               containerPort: 19090
+            - name: pprof
+              containerPort: 16060
           readinessProbe:
             tcpSocket:
               port: grpc

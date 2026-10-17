@@ -1,0 +1,16 @@
+name: fanout-512b-10-subscribers
+receiver: capmesh-benchmark-receiver:9000
+targetNamespace: capmesh
+targetKind: deployment
+targetName: capmesh-benchmark-receiver
+packetSize: 512
+packetRate: 10000
+duration: 1m
+warmup: 10s
+settle: 2s
+drain: 2s
+subscribers: 10
+snaplen: 65535
+reorderWindow: 300ms
+maxLossPercent: 0.1
+maxP99Latency: 100ms

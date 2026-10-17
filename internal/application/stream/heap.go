@@ -2,13 +2,15 @@ package stream
 
 import (
 	"container/heap"
+	"time"
 
 	"github.com/quyenhl16/cap-mesh/internal/core/domain"
 )
 
 type packetItem struct {
-	batch domain.PacketBatch
-	index int
+	batch      domain.PacketBatch
+	receivedAt time.Time
+	index      int
 }
 
 type packetHeap []*packetItem
@@ -35,7 +37,7 @@ func (h *packetHeap) Pop() any {
 	return item
 }
 
-func pushPacket(h *packetHeap, batch domain.PacketBatch, packet domain.Packet) {
+func pushPacket(h *packetHeap, batch domain.PacketBatch, packet domain.Packet, receivedAt time.Time) {
 	batch.Packets = []domain.Packet{packet}
-	heap.Push(h, &packetItem{batch: batch})
+	heap.Push(h, &packetItem{batch: batch, receivedAt: receivedAt})
 }

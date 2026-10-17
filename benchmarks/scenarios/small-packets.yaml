@@ -1,0 +1,16 @@
+name: small-packets-64b-50kpps
+receiver: capmesh-benchmark-receiver:9000
+targetNamespace: capmesh
+targetKind: deployment
+targetName: capmesh-benchmark-receiver
+packetSize: 64
+packetRate: 50000
+duration: 1m
+warmup: 10s
+settle: 2s
+drain: 2s
+subscribers: 1
+snaplen: 65535
+reorderWindow: 300ms
+maxLossPercent: 0.1
+maxP99Latency: 100ms

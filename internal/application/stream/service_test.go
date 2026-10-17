@@ -15,12 +15,18 @@ type testMetrics struct {
 	late  int
 }
 
-func (*testMetrics) PacketsReceived(int)            {}
-func (*testMetrics) PacketsEmitted(int)             {}
-func (m *testMetrics) LatePacket()                  { m.mu.Lock(); m.late++; m.mu.Unlock() }
-func (m *testMetrics) SubscriberDrop()              { m.mu.Lock(); m.drops++; m.mu.Unlock() }
-func (*testMetrics) SetReorderBuffer(int)           {}
-func (*testMetrics) ObserveSubscriberQueue(float64) {}
+func (*testMetrics) PacketsReceived(int)                      {}
+func (*testMetrics) PacketsEmitted(int)                       {}
+func (*testMetrics) BatchReceived(int, int)                   {}
+func (*testMetrics) SequenceGap(uint64)                       {}
+func (m *testMetrics) LatePacket()                            { m.mu.Lock(); m.late++; m.mu.Unlock() }
+func (m *testMetrics) SubscriberDrop()                        { m.mu.Lock(); m.drops++; m.mu.Unlock() }
+func (*testMetrics) AddReorderBuffer(int)                     {}
+func (*testMetrics) ObserveReorderWait(uint64, time.Duration) {}
+func (*testMetrics) SubscriberAdded()                         {}
+func (*testMetrics) SubscriberRemoved()                       {}
+func (*testMetrics) ObserveFanout(time.Duration, int)         {}
+func (*testMetrics) ObserveSubscriberQueue(float64)           {}
 
 func TestReordersPacketsByTimestamp(t *testing.T) {
 	metrics := &testMetrics{}

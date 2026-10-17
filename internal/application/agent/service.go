@@ -27,6 +27,7 @@ type Service struct {
 	engine            ports.CaptureEngine
 	reporter          ports.AgentReporter
 	progress          ports.CaptureProgressReporter
+	metrics           ports.AgentPipelineMetrics
 	interfaceResolver ports.PodInterfaceResolver
 	batchMaxPackets   int
 	batchMaxDelay     time.Duration
@@ -36,6 +37,10 @@ type Service struct {
 
 func (s *Service) SetPodInterfaceResolver(resolver ports.PodInterfaceResolver) {
 	s.interfaceResolver = resolver
+}
+
+func (s *Service) SetMetrics(metrics ports.AgentPipelineMetrics) {
+	s.metrics = metrics
 }
 
 func NewService(nodeName string, interfaces map[string]string, engine ports.CaptureEngine, reporter ports.AgentReporter, progress ports.CaptureProgressReporter, maxPackets int, maxDelay, progressInterval time.Duration) *Service {
@@ -179,13 +184,20 @@ func (s *Service) batch(ctx context.Context, sessionID string, source domain.Cap
 		<-timer.C
 	}
 	var batch []domain.Packet
+	var batchStarted time.Time
+	var batchBytes int
 	errorsChannel := captureErrors
-	flush := func() error {
+	flush := func(reason string) error {
 		if len(batch) == 0 {
 			return nil
 		}
+		if s.metrics != nil {
+			s.metrics.ObserveBatch(len(batch), batchBytes, time.Since(batchStarted), reason)
+		}
 		out := domain.PacketBatch{SessionID: sessionID, NodeName: s.nodeName, InterfaceName: source.InterfaceName, Source: source, Packets: batch}
 		batch = nil
+		batchStarted = time.Time{}
+		batchBytes = 0
 		return s.reporter.SendBatch(ctx, out)
 	}
 	for {
@@ -195,14 +207,15 @@ func (s *Service) batch(ctx context.Context, sessionID string, source domain.Cap
 		}
 		select {
 		case <-ctx.Done():
-			_ = flush()
+			_ = flush("shutdown")
 			return
 		case packet, ok := <-packets:
 			if !ok {
-				_ = flush()
+				_ = flush("capture_end")
 				return
 			}
 			if len(batch) == 0 {
+				batchStarted = time.Now()
 				timer.Reset(s.batchMaxDelay)
 			}
 			packetsTotal++
@@ -210,6 +223,7 @@ func (s *Service) batch(ctx context.Context, sessionID string, source domain.Cap
 			packetsInterval++
 			bytesInterval += uint64(packet.CapturedLength)
 			batch = append(batch, packet)
+			batchBytes += int(packet.CapturedLength)
 			if len(batch) >= s.batchMaxPackets {
 				if !timer.Stop() {
 					select {
@@ -217,13 +231,13 @@ func (s *Service) batch(ctx context.Context, sessionID string, source domain.Cap
 					default:
 					}
 				}
-				if err := flush(); err != nil {
+				if err := flush("size"); err != nil {
 					_ = s.reporter.SendStatus(context.Background(), sessionID, source.ID, "FAILED", err.Error())
 					return
 				}
 			}
 		case <-timerC:
-			if err := flush(); err != nil {
+			if err := flush("timeout"); err != nil {
 				_ = s.reporter.SendStatus(context.Background(), sessionID, source.ID, "FAILED", err.Error())
 				return
 			}
@@ -237,7 +251,7 @@ func (s *Service) batch(ctx context.Context, sessionID string, source domain.Cap
 			if err != nil && !errors.Is(err, context.Canceled) {
 				_ = s.reporter.SendStatus(context.Background(), sessionID, source.ID, "FAILED", err.Error())
 			}
-			_ = flush()
+			_ = flush("error")
 			return
 		}
 	}

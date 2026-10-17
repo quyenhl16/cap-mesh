@@ -111,10 +111,20 @@ type PodInterfaceResolver interface {
 type Metrics interface {
 	PacketsReceived(int)
 	PacketsEmitted(int)
+	BatchReceived(int, int)
+	SequenceGap(uint64)
 	LatePacket()
 	SubscriberDrop()
-	SetReorderBuffer(int)
+	AddReorderBuffer(int)
+	ObserveReorderWait(uint64, time.Duration)
+	SubscriberAdded()
+	SubscriberRemoved()
+	ObserveFanout(time.Duration, int)
 	ObserveSubscriberQueue(float64)
+}
+
+type AgentPipelineMetrics interface {
+	ObserveBatch(int, int, time.Duration, string)
 }
 
 type CaptureEngine interface {

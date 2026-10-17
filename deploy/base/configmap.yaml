@@ -6,6 +6,10 @@ data:
   # Server
   CAPMESH_SERVER_LISTEN: ":18443"
   CAPMESH_SERVER_METRICS_LISTEN: ":19090"
+  # Disabled by default; set to ":16060" temporarily when collecting profiles.
+  CAPMESH_SERVER_PPROF_LISTEN: ""
+  # Sample one out of every N packets for reorder-wait latency.
+  CAPMESH_METRICS_SAMPLE_EVERY: "1024"
   CAPMESH_TLS_CERT: /var/run/capmesh/tls/tls.crt
   CAPMESH_TLS_KEY: /var/run/capmesh/tls/tls.key
   CAPMESH_SUBSCRIBER_QUEUE_SIZE: "10000"
@@ -25,6 +29,8 @@ data:
   CAPMESH_DUMPCAP: dumpcap
   CAPMESH_INSECURE: "false"
   CAPMESH_AGENT_METRICS_LISTEN: ":19091"
+  # Disabled by default; set to ":16061" temporarily when collecting profiles.
+  CAPMESH_AGENT_PPROF_LISTEN: ""
   CAPMESH_CAPTURE_LOG_INTERVAL: 10s
   CAPMESH_INTERFACES_FROM_KUBERNETES: "true"
   CAPMESH_INTERFACES: ""

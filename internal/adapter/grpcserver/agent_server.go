@@ -18,10 +18,15 @@ type AgentServer struct {
 	packets  ports.PacketPublisher
 	logger   *slog.Logger
 	onStatus func(context.Context, string, string, string, string, string)
+	metrics  ports.Metrics
 }
 
 func (s *AgentServer) OnCaptureStatus(handler func(context.Context, string, string, string, string, string)) {
 	s.onStatus = handler
+}
+
+func (s *AgentServer) SetMetrics(metrics ports.Metrics) {
+	s.metrics = metrics
 }
 
 func NewAgentServer(registry *AgentRegistry, packets ports.PacketPublisher, logger *slog.Logger) *AgentServer {
@@ -69,10 +74,24 @@ func (s *AgentServer) Connect(stream capmeshv1.AgentService_ConnectServer) error
 		case message := <-incoming:
 			s.registry.touch(node, connection)
 			if batch := message.GetBatch(); batch != nil {
+				capturedBytes := 0
+				for _, packet := range batch.GetPackets() {
+					capturedBytes += len(packet.GetData())
+				}
+				if s.metrics != nil {
+					s.metrics.BatchReceived(len(batch.GetPackets()), capturedBytes)
+				}
 				key := batch.GetSessionId() + "/" + batch.GetSource().GetId() + "/" + batch.GetInterfaceName()
 				for _, packet := range batch.GetPackets() {
 					if previous := sequences[key]; previous != 0 && packet.GetSequenceNumber() != previous+1 {
 						s.logger.Warn("packet sequence gap", "node", node, "session_id", batch.GetSessionId(), "interface", batch.GetInterfaceName(), "expected", previous+1, "actual", packet.GetSequenceNumber())
+						if s.metrics != nil {
+							missing := uint64(0)
+							if packet.GetSequenceNumber() > previous+1 {
+								missing = packet.GetSequenceNumber() - previous - 1
+							}
+							s.metrics.SequenceGap(missing)
+						}
 					}
 					sequences[key] = packet.GetSequenceNumber()
 				}

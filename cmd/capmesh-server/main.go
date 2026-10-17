@@ -23,6 +23,7 @@ import (
 	"github.com/quyenhl16/cap-mesh/internal/adapter/logrecording"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/memory"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/observability"
 	"github.com/quyenhl16/cap-mesh/internal/adapter/recording"
 	appcontinuous "github.com/quyenhl16/cap-mesh/internal/application/continuous"
 	applogcapture "github.com/quyenhl16/cap-mesh/internal/application/logcapture"
@@ -37,6 +38,8 @@ import (
 func main() {
 	listenAddress := flag.String("listen", ":18443", "gRPC listen address")
 	metricsAddress := flag.String("metrics-listen", ":19090", "Prometheus metrics listen address")
+	pprofAddress := flag.String("pprof-listen", "", "pprof listen address; empty disables pprof")
+	metricsSampleEvery := flag.Uint64("metrics-sample-every", 1024, "sample one in every N packets for per-packet latency metrics")
 	token := flag.String("token", os.Getenv("CAPMESH_TOKEN"), "shared bearer token")
 	adminToken := flag.String("admin-token", os.Getenv("CAPMESH_ADMIN_TOKEN"), "bearer token allowed to create, view, and stop sessions")
 	viewerToken := flag.String("viewer-token", os.Getenv("CAPMESH_VIEWER_TOKEN"), "bearer token allowed to view sessions and packets")
@@ -53,6 +56,8 @@ func main() {
 	if err := envconfig.Apply(flag.CommandLine, map[string]string{
 		"CAPMESH_SERVER_LISTEN":                "listen",
 		"CAPMESH_SERVER_METRICS_LISTEN":        "metrics-listen",
+		"CAPMESH_SERVER_PPROF_LISTEN":          "pprof-listen",
+		"CAPMESH_METRICS_SAMPLE_EVERY":         "metrics-sample-every",
 		"CAPMESH_TLS_CERT":                     "tls-cert",
 		"CAPMESH_TLS_KEY":                      "tls-key",
 		"CAPMESH_SUBSCRIBER_QUEUE_SIZE":        "subscriber-queue-size",
@@ -69,6 +74,10 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	if *metricsSampleEvery < 1 {
+		logger.Error("--metrics-sample-every must be positive")
+		os.Exit(2)
+	}
 	var segmentSize, maxSessionSize, maxNormalTotal int64
 	var err error
 	if *recordDirectory != "" {
@@ -101,7 +110,8 @@ func main() {
 	}
 
 	registry := prometheus.NewRegistry()
-	serverMetrics := metricadapter.NewServer(registry)
+	observability.RegisterRuntimeCollectors(registry)
+	serverMetrics := metricadapter.NewServerWithSampling(registry, *metricsSampleEvery)
 	packetService := appstream.NewService(serverMetrics)
 	agents := grpcserver.NewAgentRegistry()
 	var captureRecorder ports.CaptureRecorder
@@ -211,6 +221,7 @@ func main() {
 	}
 	grpcServer := grpc.NewServer(options...)
 	agentServer := grpcserver.NewAgentServer(agents, packetService, logger)
+	agentServer.SetMetrics(serverMetrics)
 	agentServer.OnCaptureStatus(sessions.CaptureStatus)
 	capmeshv1.RegisterAgentServiceServer(grpcServer, agentServer)
 	captureServer := grpcserver.NewCaptureServer(sessions, packetService, logger)
@@ -230,6 +241,17 @@ func main() {
 			cancel()
 		}
 	}()
+	var pprofServer *http.Server
+	if *pprofAddress != "" {
+		pprofServer = observability.NewPprofServer(*pprofAddress)
+		go func() {
+			logger.Info("pprof server listening", "address", *pprofAddress)
+			if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("pprof server failed", "error", err)
+				cancel()
+			}
+		}()
+	}
 	go func() {
 		logger.Info("gRPC server listening", "address", *listenAddress)
 		if err := grpcServer.Serve(listener); err != nil {
@@ -253,6 +275,9 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = metricsServer.Shutdown(shutdownCtx)
+	if pprofServer != nil {
+		_ = pprofServer.Shutdown(shutdownCtx)
+	}
 	if workloadLogCapture != nil {
 		logCtx, logCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer logCancel()

@@ -24,6 +24,7 @@ import (
 	"github.com/quyenhl16/cap-mesh/internal/adapter/kubernetes"
 	logadapter "github.com/quyenhl16/cap-mesh/internal/adapter/logging"
 	metricadapter "github.com/quyenhl16/cap-mesh/internal/adapter/metrics"
+	"github.com/quyenhl16/cap-mesh/internal/adapter/observability"
 	appagent "github.com/quyenhl16/cap-mesh/internal/application/agent"
 	"github.com/quyenhl16/cap-mesh/internal/core/interfacealias"
 )
@@ -79,6 +80,7 @@ func main() {
 	caFile := flag.String("tls-ca", "", "server CA certificate")
 	serverName := flag.String("tls-server-name", "", "TLS server name override")
 	metricsAddress := flag.String("metrics-listen", ":19091", "Prometheus metrics listen address")
+	pprofAddress := flag.String("pprof-listen", "", "pprof listen address; empty disables pprof")
 	captureLogInterval := flag.Duration("capture-log-interval", 10*time.Second, "interval for per-interface packet count logs; 0 disables periodic logs")
 	interfacesFromKubernetes := flag.Bool("interfaces-from-kubernetes", false, "read interface mappings from Node annotations")
 	if err := envconfig.Apply(flag.CommandLine, map[string]string{
@@ -91,6 +93,7 @@ func main() {
 		"CAPMESH_TLS_CA":                     "tls-ca",
 		"CAPMESH_TLS_SERVER_NAME":            "tls-server-name",
 		"CAPMESH_AGENT_METRICS_LISTEN":       "metrics-listen",
+		"CAPMESH_AGENT_PPROF_LISTEN":         "pprof-listen",
 		"CAPMESH_CAPTURE_LOG_INTERVAL":       "capture-log-interval",
 		"CAPMESH_INTERFACES_FROM_KUBERNETES": "interfaces-from-kubernetes",
 	}); err != nil {
@@ -137,10 +140,12 @@ func main() {
 
 	reporter := grpcclient.NewReporter(256)
 	registry := prometheus.NewRegistry()
+	observability.RegisterRuntimeCollectors(registry)
 	agentMetrics := metricadapter.NewAgent(registry, reporter)
 	engine := metricadapter.NewCaptureEngine(capture.Dumpcap{Binary: *dumpcap, Logger: logger}, agentMetrics)
 	progressLogger := logadapter.NewCaptureProgress(logger)
 	service := appagent.NewService(*node, interfaces, engine, agentMetrics, progressLogger, 64, 10*time.Millisecond, *captureLogInterval)
+	service.SetMetrics(agentMetrics)
 	service.SetPodInterfaceResolver(capture.IPRouteResolver{Binary: "ip"})
 	metricsServer := &http.Server{Addr: *metricsAddress, Handler: promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -149,12 +154,24 @@ func main() {
 			cancel()
 		}
 	}()
+	var pprofServer *http.Server
+	if *pprofAddress != "" {
+		pprofServer = observability.NewPprofServer(*pprofAddress)
+		go func() {
+			logger.Info("pprof server listening", "address", *pprofAddress)
+			if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("pprof server failed", "error", err)
+				cancel()
+			}
+		}()
+	}
 
 	config := grpcclient.DialConfig{Address: *server, Insecure: *insecureTransport, CAFile: *caFile, ServerName: *serverName, Token: *token}
 	for ctx.Err() == nil {
 		connection, err := grpcclient.Dial(config)
 		if err == nil {
 			transport := grpcclient.NewAgentTransport(connection, reporter, *token)
+			transport.SetMetrics(agentMetrics)
 			err = transport.Connect(ctx, *node, interfaces, func(command *capmeshv1.AgentCommand) error {
 				if start := command.GetStart(); start != nil {
 					return service.Start(ctx, appagent.StartRequest{SessionID: start.GetSessionId(), LogicalInterface: start.GetLogicalInterface(), Filter: start.GetFilter(), Snaplen: start.GetSnaplen(), Source: grpcapi.CaptureSourceFromProto(start.GetSource())})
@@ -170,6 +187,7 @@ func main() {
 		if ctx.Err() != nil {
 			break
 		}
+		agentMetrics.StreamReconnect()
 		logger.Warn("agent connection lost; retrying", "error", err)
 		select {
 		case <-time.After(2 * time.Second):
@@ -179,6 +197,9 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = metricsServer.Shutdown(shutdownCtx)
+	if pprofServer != nil {
+		_ = pprofServer.Shutdown(shutdownCtx)
+	}
 }
 
 func defaultNodeName() string {

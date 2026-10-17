@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: capmesh-benchmark-runner
+  namespace: capmesh
+  labels:
+    app.kubernetes.io/name: capmesh-benchmark
+    app.kubernetes.io/component: runner
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: capmesh-benchmark
+        app.kubernetes.io/component: runner
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: capmesh-benchmark
+                    app.kubernetes.io/component: receiver
+      containers:
+        - name: runner
+          image: capmesh-benchmark:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CAPMESH_BENCHMARK_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          args:
+            - run
+            - --scenario=/benchmarks/scenarios/baseline.yaml
+            - --server=capmesh-server:18443
+            - --tls-ca=/var/run/capmesh/tls/ca.crt
+            - --tls-server-name=capmesh-server
+            - --token-file=/var/run/capmesh/auth/token
+            - --output=/dev/termination-log
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: tls
+              mountPath: /var/run/capmesh/tls
+              readOnly: true
+            - name: auth
+              mountPath: /var/run/capmesh/auth
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: capmesh-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: auth
+          secret:
+            secretName: capmesh-auth
+            items:
+              - key: token
+                path: token

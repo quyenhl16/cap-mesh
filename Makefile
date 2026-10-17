@@ -3,7 +3,7 @@ PROTOC ?= protoc
 PROTOC_GEN_GO ?= protoc-gen-go
 PROTOC_GEN_GO_GRPC ?= protoc-gen-go-grpc
 
-.PHONY: all generate vendor build test race vet clean
+.PHONY: all generate vendor build benchmark test race vet clean
 
 all: test build
 
@@ -20,6 +20,10 @@ build:
 	$(GO) build -mod=vendor -trimpath -o bin/capmesh-server ./cmd/capmesh-server
 	$(GO) build -mod=vendor -trimpath -o bin/capmesh-agent ./cmd/capmesh-agent
 	$(GO) build -mod=vendor -trimpath -o bin/capmesh-client ./cmd/capmesh-client
+	$(GO) build -mod=vendor -trimpath -o bin/capmesh-benchmark ./cmd/capmesh-benchmark
+
+benchmark:
+	$(GO) build -mod=vendor -trimpath -o bin/capmesh-benchmark ./cmd/capmesh-benchmark
 
 test:
 	$(GO) test -mod=vendor ./...

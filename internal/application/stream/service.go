@@ -68,14 +68,15 @@ func (s *Service) Publish(batch domain.PacketBatch) {
 		p.mu.Unlock()
 		return
 	}
+	receivedAt := time.Now()
 	for _, packet := range batch.Packets {
 		if !p.lastEmitted.IsZero() && packet.Timestamp.Before(p.lastEmitted) {
 			p.metrics.LatePacket()
 		}
-		pushPacket(&p.packets, batch, packet)
+		pushPacket(&p.packets, batch, packet, receivedAt)
 	}
 	p.metrics.PacketsReceived(len(batch.Packets))
-	p.metrics.SetReorderBuffer(p.packets.Len())
+	p.metrics.AddReorderBuffer(len(batch.Packets))
 	p.mu.Unlock()
 	select {
 	case p.wake <- struct{}{}:
@@ -114,6 +115,7 @@ func (s *Service) subscribe(ctx context.Context, sessionID string, queueSize int
 	p.nextID++
 	sub := &subscriber{batches: make(chan domain.PacketBatch, queueSize), dropped: make(chan struct{}), disconnectOnDrop: disconnectOnDrop}
 	p.subscribers[id] = sub
+	p.metrics.SubscriberAdded()
 	p.mu.Unlock()
 	go func() {
 		select {
@@ -167,24 +169,30 @@ func (p *pipeline) emitUntil(cutoff time.Time, all bool) {
 			break
 		}
 		heap.Pop(&p.packets)
+		p.metrics.AddReorderBuffer(-1)
+		p.metrics.ObserveReorderWait(packet.SequenceNumber, time.Since(item.receivedAt))
 		p.lastEmitted = packet.Timestamp
+		fanoutStarted := time.Now()
+		deliveries := 0
 		for id, subscriber := range p.subscribers {
 			select {
 			case subscriber.batches <- item.batch.Clone():
+				deliveries++
 			default:
 				p.metrics.SubscriberDrop()
 				if subscriber.disconnectOnDrop {
 					close(subscriber.dropped)
 					close(subscriber.batches)
 					delete(p.subscribers, id)
+					p.metrics.SubscriberRemoved()
 					continue
 				}
 			}
 			p.metrics.ObserveSubscriberQueue(float64(len(subscriber.batches)) / float64(cap(subscriber.batches)))
 		}
+		p.metrics.ObserveFanout(time.Since(fanoutStarted), deliveries)
 		p.metrics.PacketsEmitted(1)
 	}
-	p.metrics.SetReorderBuffer(p.packets.Len())
 }
 
 func (p *pipeline) removeSubscriber(id uint64) {
@@ -193,6 +201,7 @@ func (p *pipeline) removeSubscriber(id uint64) {
 	if subscriber, ok := p.subscribers[id]; ok {
 		delete(p.subscribers, id)
 		close(subscriber.batches)
+		p.metrics.SubscriberRemoved()
 	}
 }
 
@@ -204,6 +213,7 @@ func (p *pipeline) close() {
 		for id, subscriber := range p.subscribers {
 			delete(p.subscribers, id)
 			close(subscriber.batches)
+			p.metrics.SubscriberRemoved()
 		}
 		close(p.done)
 	}

@@ -1,5 +1,8 @@
 # CapMesh
 
+Hướng dẫn cài đặt Kubernetes, cấu hình client và sử dụng đầy đủ CLI xem tại
+[user_guide.md](user_guide.md).
+
 CapMesh là hệ thống bắt và xem packet phân tán gần thời gian thực trên Kubernetes. Agent chạy trên từng worker, điều khiển `dumpcap`, chuyển packet qua gRPC về server; client hợp nhất các nguồn thành PCAPNG nhiều interface để Wireshark đọc trực tiếp từ `stdin`.
 
 ```text

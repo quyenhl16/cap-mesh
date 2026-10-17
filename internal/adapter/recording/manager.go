@@ -115,6 +115,7 @@ type sessionRecorder struct {
 	segmentCount atomic.Int64
 	finalStatus  string
 	finalError   string
+	queueDepth   int
 }
 
 type countingWriter struct {
@@ -154,6 +155,9 @@ func NewManager(config Config, packets ports.PacketPublisher, logger *slog.Logge
 		logger = slog.Default()
 	}
 	config.Directory = root
+	if metrics != nil {
+		metrics.queueCapacity.Set(float64(config.QueueSize))
+	}
 	return &Manager{config: config, packets: packets, logger: logger, metrics: metrics, active: make(map[string]*sessionRecorder), completed: make(map[string]domain.RecordingUsage), recovery: make(map[string]string)}, nil
 }
 
@@ -404,6 +408,11 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 func (r *sessionRecorder) run() {
 	defer r.cancel()
+	defer func() {
+		if r.metrics != nil && r.queueDepth != 0 {
+			r.metrics.queueDepth.Sub(float64(r.queueDepth))
+		}
+	}()
 	flushTicker := time.NewTicker(r.config.FlushInterval)
 	syncTicker := time.NewTicker(r.config.SyncInterval)
 	defer flushTicker.Stop()
@@ -421,6 +430,7 @@ func (r *sessionRecorder) run() {
 	for {
 		select {
 		case batch, ok := <-r.subscription.Batches:
+			r.observeQueue()
 			if !ok {
 				if r.context.Err() != nil {
 					r.complete("PARTIAL", "recording interrupted by server shutdown", true)
@@ -486,8 +496,34 @@ func (r *sessionRecorder) run() {
 	}
 }
 
-func (r *sessionRecorder) writeBatch(batch domain.PacketBatch) error {
-	if err := r.writer.WriteBatch(batch); err != nil {
+func (r *sessionRecorder) observeQueue() {
+	if r.metrics == nil {
+		return
+	}
+	depth := len(r.subscription.Batches)
+	r.metrics.queueDepth.Add(float64(depth - r.queueDepth))
+	r.queueDepth = depth
+	if capacity := cap(r.subscription.Batches); capacity > 0 {
+		r.metrics.queueUsage.Observe(float64(depth) / float64(capacity))
+	}
+}
+
+func (r *sessionRecorder) writeBatch(batch domain.PacketBatch) (err error) {
+	started := time.Now()
+	bytesBefore := int64(0)
+	if r.writer != nil {
+		bytesBefore = r.writer.BytesWritten()
+	}
+	defer func() {
+		if r.metrics == nil {
+			return
+		}
+		r.metrics.writeDuration.Observe(time.Since(started).Seconds())
+		if err != nil {
+			r.metrics.writeErrors.Inc()
+		}
+	}()
+	if err = r.writer.WriteBatch(batch); err != nil {
 		return err
 	}
 	var capturedBytes uint64
@@ -501,6 +537,10 @@ func (r *sessionRecorder) writeBatch(batch domain.PacketBatch) error {
 	if r.metrics != nil {
 		r.metrics.packets.Add(float64(len(batch.Packets)))
 		r.metrics.capturedBytes.Add(float64(capturedBytes))
+		r.metrics.batchPackets.Observe(float64(len(batch.Packets)))
+		if r.writer != nil {
+			r.metrics.writeBytes.Add(float64(r.writer.BytesWritten() - bytesBefore))
+		}
 	}
 	return nil
 }
@@ -521,19 +561,38 @@ func (r *sessionRecorder) openSegment() error {
 	return nil
 }
 
-func (r *sessionRecorder) flush() error {
+func (r *sessionRecorder) flush() (err error) {
 	if r.writer == nil {
 		return nil
 	}
+	started := time.Now()
+	defer func() {
+		if r.metrics != nil {
+			r.metrics.flushDuration.Observe(time.Since(started).Seconds())
+			if err != nil {
+				r.metrics.writeErrors.Inc()
+			}
+		}
+	}()
 	return r.writer.Flush()
 }
 
-func (r *sessionRecorder) sync() error {
-	if err := r.flush(); err != nil {
+func (r *sessionRecorder) sync() (err error) {
+	started := time.Now()
+	defer func() {
+		if r.metrics != nil {
+			r.metrics.syncDuration.Observe(time.Since(started).Seconds())
+			if err != nil {
+				r.metrics.writeErrors.Inc()
+			}
+		}
+	}()
+	if err = r.flush(); err != nil {
 		return err
 	}
 	if r.file != nil {
-		return r.file.Sync()
+		err = r.file.Sync()
+		return err
 	}
 	return nil
 }
@@ -561,10 +620,19 @@ func (r *sessionRecorder) rotate() error {
 	return r.openSegment()
 }
 
-func (r *sessionRecorder) finishSegment(partial bool) error {
+func (r *sessionRecorder) finishSegment(partial bool) (err error) {
 	if r.file == nil {
 		return nil
 	}
+	started := time.Now()
+	defer func() {
+		if r.metrics != nil {
+			r.metrics.finalizeDuration.Observe(time.Since(started).Seconds())
+			if err != nil {
+				r.metrics.writeErrors.Inc()
+			}
+		}
+	}()
 	partPath := r.file.Name()
 	if r.segmentPkts == 0 {
 		_ = r.file.Close()

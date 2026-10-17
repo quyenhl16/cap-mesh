@@ -39,6 +39,8 @@ spec:
           ports:
             - name: metrics
               containerPort: 19091
+            - name: pprof
+              containerPort: 16061
           resources:
             requests:
               cpu: 100m
