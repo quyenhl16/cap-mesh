@@ -1,8 +1,8 @@
 remote: https://github.com/quyenhl16/cap-mesh.git
 branch: master
 latest_commit:
-  hash: dc5a62bd80cbd247906761e9df0e161d59b6211f
-  short_hash: dc5a62b
-  date: 2026-10-03T13:52:30+07:00
-  subject: "feat: add resilient recordings and client commands"
-latest_tag: 0.0.12
+  hash: 47b49fe84c93075bcbca797d337a891d6b87ec4f
+  short_hash: 47b49fe
+  date: 2026-10-17T11:03:39+07:00
+  subject: "feat: complete phase 0 benchmark and observability"
+latest_tag: 0.1.0
