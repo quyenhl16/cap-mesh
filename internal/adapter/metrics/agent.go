@@ -33,6 +33,14 @@ type Agent struct {
 	outboundOverflows   prometheus.Counter
 	outboundDropped     prometheus.Counter
 	outboundDisconnects prometheus.Counter
+	captureEngines      *prometheus.CounterVec
+	captureFallbacks    *prometheus.CounterVec
+	afpacketPackets     prometheus.Counter
+	afpacketDrops       prometheus.Counter
+	afpacketFreezes     prometheus.Counter
+	afpacketPolls       prometheus.Counter
+	afpacketRingBytes   prometheus.Gauge
+	afpacketActiveRings prometheus.Gauge
 }
 
 func NewAgent(registerer prometheus.Registerer, inner ports.AgentReporter) *Agent {
@@ -59,8 +67,16 @@ func NewAgent(registerer prometheus.Registerer, inner ports.AgentReporter) *Agen
 		outboundOverflows:   prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_outbound_queue_overflows_total", Help: "Capture batches dropped because the bounded gRPC outbound queue was full."}),
 		outboundDropped:     prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_outbound_dropped_packets_total", Help: "Packets dropped because the bounded gRPC outbound queue was full."}),
 		outboundDisconnects: prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_outbound_disconnect_dropped_batches_total", Help: "Queued capture batches discarded when the gRPC stream disconnected."}),
+		captureEngines:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "capmesh_agent_capture_engine_selections_total", Help: "Capture sessions started by backend."}, []string{"engine"}),
+		captureFallbacks:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "capmesh_agent_capture_engine_fallbacks_total", Help: "Automatic fallbacks from AF_PACKET to dumpcap."}, []string{"reason"}),
+		afpacketPackets:     prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_afpacket_socket_packets_total", Help: "Packets reported by AF_PACKET socket statistics."}),
+		afpacketDrops:       prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_afpacket_socket_drops_total", Help: "Packets dropped by AF_PACKET sockets."}),
+		afpacketFreezes:     prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_afpacket_queue_freezes_total", Help: "TPACKET_V3 queue freeze events."}),
+		afpacketPolls:       prometheus.NewCounter(prometheus.CounterOpts{Name: "capmesh_agent_afpacket_polls_total", Help: "Blocking poll calls made by AF_PACKET readers."}),
+		afpacketRingBytes:   prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_afpacket_ring_bytes", Help: "Total mmap ring bytes held by active AF_PACKET captures."}),
+		afpacketActiveRings: prometheus.NewGauge(prometheus.GaugeOpts{Name: "capmesh_agent_afpacket_active_rings", Help: "Number of active AF_PACKET mmap rings."}),
 	}
-	registerer.MustRegister(a.captured, a.dropped, a.captureErrors, a.captureQueueDepth, a.captureQueueCap, a.sent, a.batches, a.batchPackets, a.batchBytes, a.batchAge, a.batchFlushes, a.streamErrors, a.streamReconnects, a.transportDuration, a.transportMessages, a.capturedBytes, a.outboundQueueDepth, a.outboundQueueCap, a.outboundOverflows, a.outboundDropped, a.outboundDisconnects)
+	registerer.MustRegister(a.captured, a.dropped, a.captureErrors, a.captureQueueDepth, a.captureQueueCap, a.sent, a.batches, a.batchPackets, a.batchBytes, a.batchAge, a.batchFlushes, a.streamErrors, a.streamReconnects, a.transportDuration, a.transportMessages, a.capturedBytes, a.outboundQueueDepth, a.outboundQueueCap, a.outboundOverflows, a.outboundDropped, a.outboundDisconnects, a.captureEngines, a.captureFallbacks, a.afpacketPackets, a.afpacketDrops, a.afpacketFreezes, a.afpacketPolls, a.afpacketRingBytes, a.afpacketActiveRings)
 	return a
 }
 
@@ -120,6 +136,32 @@ func (a *Agent) ObserveOutboundQueue(depth, capacity int) {
 func (a *Agent) ObserveOutboundDiscard(packets int) {
 	a.outboundDisconnects.Inc()
 	a.outboundDropped.Add(float64(packets))
+}
+
+func (a *Agent) CaptureEngineSelected(engine string) {
+	a.captureEngines.WithLabelValues(engine).Inc()
+}
+
+func (a *Agent) CaptureEngineFallback(reason string) {
+	a.captureFallbacks.WithLabelValues(reason).Inc()
+}
+
+func (a *Agent) AFPacketRingOpened(bytes int) {
+	a.afpacketActiveRings.Inc()
+	a.afpacketRingBytes.Add(float64(bytes))
+}
+
+func (a *Agent) AFPacketRingClosed(bytes int) {
+	a.afpacketActiveRings.Dec()
+	a.afpacketRingBytes.Sub(float64(bytes))
+}
+
+func (a *Agent) ObserveAFPacketStats(packets, drops, freezes, polls uint64) {
+	a.afpacketPackets.Add(float64(packets))
+	a.afpacketDrops.Add(float64(drops))
+	a.dropped.Add(float64(drops))
+	a.afpacketFreezes.Add(float64(freezes))
+	a.afpacketPolls.Add(float64(polls))
 }
 
 type CaptureEngine struct {

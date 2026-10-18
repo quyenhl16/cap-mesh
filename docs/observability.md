@@ -60,6 +60,14 @@ Agent pipeline:
   `capmesh_agent_grpc_messages_total{type=...,result=...}`
 - `capmesh_agent_capture_errors_total`, `capmesh_agent_stream_errors_total`,
   and `capmesh_agent_stream_reconnects_total`
+- `capmesh_agent_capture_engine_selections_total{engine=...}` and
+  `capmesh_agent_capture_engine_fallbacks_total{reason=...}`
+- `capmesh_agent_afpacket_socket_packets_total`,
+  `capmesh_agent_afpacket_socket_drops_total`, and
+  `capmesh_agent_afpacket_queue_freezes_total`
+- `capmesh_agent_afpacket_polls_total`,
+  `capmesh_agent_afpacket_active_rings`, and
+  `capmesh_agent_afpacket_ring_bytes`
 
 Server pipeline:
 
@@ -93,10 +101,12 @@ Go/process metrics such as `go_goroutines`, `go_memstats_alloc_bytes`,
 `process_cpu_seconds_total`, and `process_resident_memory_bytes` are available
 from both components.
 
-The dumpcap backend does not currently expose kernel packet-drop statistics.
-Use sequence-gap counters and benchmark loss as the end-to-end loss signals;
-`capmesh_agent_packets_dropped_total` remains zero until a capture backend can
-provide a reliable drop count.
+The dumpcap backend does not expose kernel packet-drop statistics. AF_PACKET
+reads `PACKET_STATISTICS`; its socket drop delta increments both
+`capmesh_agent_afpacket_socket_drops_total` and the backend-neutral
+`capmesh_agent_packets_dropped_total`. Continue to use sequence gaps and
+benchmark loss as end-to-end signals because socket statistics do not include
+drops later in the transport or subscriber pipeline.
 
 ## Sampling
 

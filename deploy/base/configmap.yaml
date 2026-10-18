@@ -30,6 +30,14 @@ data:
   CAPMESH_TLS_CA: /var/run/capmesh/tls/ca.crt
   CAPMESH_TLS_SERVER_NAME: capmesh-server
   CAPMESH_DUMPCAP: dumpcap
+  # auto prefers AF_PACKET/TPACKET_V3 and falls back to dumpcap only when the
+  # socket cannot be initialized. Benchmarks should select a strict engine.
+  CAPMESH_CAPTURE_ENGINE: auto
+  CAPMESH_CAPTURE_RING_SIZE: 64MiB
+  CAPMESH_CAPTURE_BLOCK_SIZE: 1MiB
+  CAPMESH_CAPTURE_RING_BUDGET: 512MiB
+  CAPMESH_CAPTURE_BLOCK_TIMEOUT: 1ms
+  CAPMESH_CAPTURE_POLL_TIMEOUT: 1ms
   CAPMESH_INSECURE: "false"
   CAPMESH_AGENT_METRICS_LISTEN: ":19091"
   # Disabled by default; set to ":16061" temporarily when collecting profiles.

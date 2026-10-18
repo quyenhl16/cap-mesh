@@ -3,17 +3,17 @@
 Hướng dẫn cài đặt Kubernetes, cấu hình client và sử dụng đầy đủ CLI xem tại
 [user_guide.md](user_guide.md).
 
-CapMesh là hệ thống bắt và xem packet phân tán gần thời gian thực trên Kubernetes. Agent chạy trên từng worker, điều khiển `dumpcap`, chuyển packet qua gRPC về server; client hợp nhất các nguồn thành PCAPNG nhiều interface để Wireshark đọc trực tiếp từ `stdin`.
+CapMesh là hệ thống bắt và xem packet phân tán gần thời gian thực trên Kubernetes. Agent chạy trên từng worker, ưu tiên `AF_PACKET/TPACKET_V3` và giữ `dumpcap` làm fallback, chuyển packet qua gRPC về server; client hợp nhất các nguồn thành PCAPNG nhiều interface để Wireshark đọc trực tiếp từ `stdin`.
 
 ```text
-dumpcap -> capmesh-agent ==gRPC==> capmesh-server ==gRPC==> capmesh-client -> Wireshark
+AF_PACKET/dumpcap -> capmesh-agent ==gRPC==> capmesh-server ==gRPC==> capmesh-client -> Wireshark
 ```
 
 ## Trạng thái MVP
 
 Repository này cung cấp ba chương trình:
 
-- `capmesh-agent`: ánh xạ tối đa 10 interface bằng alias tùy chỉnh, quản lý `dumpcap`, batch tối đa 64 packet hoặc 10 ms và tự kết nối lại server.
+- `capmesh-agent`: ánh xạ tối đa 10 interface bằng alias tùy chỉnh, quản lý AF_PACKET/dumpcap, tạo batch giới hạn theo packet/byte/time và tự kết nối lại server.
 - `capmesh-server`: quản lý session in-memory, kiểm tra sequence gap, reorder bằng min-heap, TTL tự dừng, fan-out queue độc lập cho từng subscriber và Prometheus metrics.
 - `capmesh-client`: tạo hoặc subscribe session, ánh xạ `node/interface` sang PCAPNG Interface ID và chỉ ghi binary PCAPNG ra `stdout`.
 
@@ -27,7 +27,7 @@ cmd/                        composition root của ba binary
 internal/core/domain/       entity và quy tắc domain thuần Go
 internal/core/ports/        interface đi vào/đi ra của application
 internal/application/       use case session, agent batching, reorder/fan-out
-internal/adapter/            gRPC, dumpcap, memory, PCAPNG, metrics, Kubernetes
+internal/adapter/            gRPC, AF_PACKET, dumpcap, memory, PCAPNG, metrics, Kubernetes
 deploy/                     Kustomize base và overlays
 ```
 
@@ -426,6 +426,8 @@ cho scheduling/binding, còn dung lượng thực phụ thuộc ổ đĩa của 
 | Server | `--record-queue-size` | `256` batch mỗi session |
 | Agent | `--interface alias=physical` | Bắt buộc ít nhất một ánh xạ, lặp lại tối đa 10 lần |
 | Agent | batch packet / bytes / delay | `256` / `1MiB` / `1ms` |
+| Agent | capture engine | `auto`: ưu tiên AF_PACKET/TPACKET_V3, fallback dumpcap khi khởi tạo thất bại |
+| Agent | AF_PACKET ring / block / total budget | `64MiB` / `1MiB` / `512MiB` |
 | Agent | `--capture-log-interval` | `10s`; đặt `0` để tắt log định kỳ |
 | Client | `--snaplen` | `4096` byte; dùng `65535` khi cần toàn bộ payload |
 | Client | `--reorder-window` | `300ms` |
@@ -453,5 +455,5 @@ cho các lệnh start/status/stop, cách stream song song và layout file.
 - Runtime state vẫn ở memory, nhưng session đang có `desired_state=RUNNING`, continuous capture và workload-log capture được dựng lại từ recovery metadata khi server pod khởi động lại. Packet phát sinh trong thời gian server unavailable vẫn có thể mất vì agent chưa có acknowledged replay buffer.
 - Đồng hồ worker phải đồng bộ bằng NTP/Chrony; reorder không sửa clock skew.
 - BPF được truyền dưới dạng một argument riêng, không qua shell; `dumpcap` trên agent là nơi compile và từ chối filter không hợp lệ.
-- Capture drop do kernel/`dumpcap` chưa được parse từ thống kê cuối phiên; metric được đăng ký nhưng chỉ tăng khi adapter capture bổ sung nguồn thống kê tương ứng.
-- Chưa có lưu trữ object, web UI, extcap, deduplicate hoặc capture engine AF_PACKET/eBPF.
+- Backend dumpcap chưa cung cấp kernel-drop; backend AF_PACKET xuất `PACKET_STATISTICS` qua các metric `capmesh_agent_afpacket_*`.
+- Chưa có lưu trữ object, web UI, extcap, deduplicate hoặc capture engine eBPF/XDP.

@@ -47,6 +47,20 @@ Keep the receiver at one replica. The runner targets this Deployment with
 
 ## Run a benchmark
 
+Select a strict capture backend before collecting a comparison. This prevents
+the `auto` mode from silently measuring dumpcap after an AF_PACKET startup
+failure:
+
+```bash
+# Baseline
+kubectl apply -k deploy/overlays/benchmark-dumpcap
+
+# Candidate, after saving the baseline result and metric snapshots
+kubectl apply -k deploy/overlays/benchmark-afpacket
+```
+
+Wait for `daemonset/capmesh-agent` to finish rolling out after each change.
+
 The default Job runs `scenarios/baseline.yaml`:
 
 ```bash

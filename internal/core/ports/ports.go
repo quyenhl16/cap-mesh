@@ -142,6 +142,16 @@ type CaptureEngine interface {
 	Capture(context.Context, CaptureRequest) (<-chan domain.CapturedBatch, <-chan error, error)
 }
 
+// CaptureEngineMetrics receives low-cardinality capture backend telemetry.
+// Packet payloads and session identifiers deliberately do not cross this port.
+type CaptureEngineMetrics interface {
+	CaptureEngineSelected(string)
+	CaptureEngineFallback(string)
+	AFPacketRingOpened(int)
+	AFPacketRingClosed(int)
+	ObserveAFPacketStats(uint64, uint64, uint64, uint64)
+}
+
 type AgentReporter interface {
 	SendBatch(context.Context, domain.PacketBatch) error
 	SendStatus(context.Context, string, string, string, string) error

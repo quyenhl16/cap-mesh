@@ -62,6 +62,29 @@ func TestAgentMetricsCountDroppedBatchWhenOutboundQueueIsFull(t *testing.T) {
 	assertMetricValue(t, registry, "capmesh_agent_batches_sent_total", 0)
 }
 
+func TestAgentMetricsExposeAFPacketSignals(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewAgent(registry, &stubReporter{})
+	metrics.CaptureEngineSelected("afpacket")
+	metrics.CaptureEngineFallback("ring_budget")
+	metrics.AFPacketRingOpened(64 << 20)
+	metrics.ObserveAFPacketStats(100, 2, 1, 10)
+
+	assertMetricValue(t, registry, "capmesh_agent_capture_engine_selections_total", 1)
+	assertMetricValue(t, registry, "capmesh_agent_capture_engine_fallbacks_total", 1)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_socket_packets_total", 100)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_socket_drops_total", 2)
+	assertMetricValue(t, registry, "capmesh_agent_packets_dropped_total", 2)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_queue_freezes_total", 1)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_polls_total", 10)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_active_rings", 1)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_ring_bytes", 64<<20)
+
+	metrics.AFPacketRingClosed(64 << 20)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_active_rings", 0)
+	assertMetricValue(t, registry, "capmesh_agent_afpacket_ring_bytes", 0)
+}
+
 type stubReporter struct{}
 
 func (*stubReporter) SendBatch(context.Context, domain.PacketBatch) error { return nil }

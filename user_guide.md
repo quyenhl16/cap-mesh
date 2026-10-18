@@ -9,7 +9,7 @@ năng capture packet/log.
 CapMesh gồm ba thành phần:
 
 - `capmesh-agent`: chạy dưới dạng DaemonSet trên từng worker node, gọi
-  `dumpcap` để bắt packet và gửi packet về server qua gRPC.
+  `AF_PACKET/TPACKET_V3` hoặc `dumpcap` để bắt packet và gửi packet về server qua gRPC.
 - `capmesh-server`: quản lý session, agent, recording, continuous capture và
   workload log capture. Server hiện chạy một replica.
 - `capmesh-client`: CLI dùng để tạo, xem, stream, dừng session và quản lý
@@ -18,7 +18,7 @@ CapMesh gồm ba thành phần:
 Luồng dữ liệu chính:
 
 ```text
-dumpcap -> capmesh-agent -> capmesh-server -> capmesh-client -> Wireshark/file
+AF_PACKET/dumpcap -> capmesh-agent -> capmesh-server -> capmesh-client -> Wireshark/file
 ```
 
 Các manifest Kubernetes nằm trong:
@@ -313,6 +313,12 @@ Các biến token của server:
 | `CAPMESH_TLS_SERVER_NAME` | `--tls-server-name` | `capmesh-server` | DNS SAN dùng khi xác minh TLS. |
 | `CAPMESH_INSECURE` | `--insecure` | `false` | Tắt TLS; chỉ dùng cho local development. |
 | `CAPMESH_DUMPCAP` | `--dumpcap` | `dumpcap` | Đường dẫn binary dumpcap. |
+| `CAPMESH_CAPTURE_ENGINE` | `--capture-engine` | `auto` | `auto`, `afpacket` hoặc `dumpcap`; benchmark nên dùng strict mode. |
+| `CAPMESH_CAPTURE_RING_SIZE` | `--capture-ring-size` | `64MiB` | Kích thước TPACKET_V3 mmap ring cho mỗi capture source. |
+| `CAPMESH_CAPTURE_BLOCK_SIZE` | `--capture-block-size` | `1MiB` | Kích thước block của TPACKET_V3. |
+| `CAPMESH_CAPTURE_RING_BUDGET` | `--capture-ring-budget` | `512MiB` | Tổng ring memory tối đa của agent. |
+| `CAPMESH_CAPTURE_BLOCK_TIMEOUT` | `--capture-block-timeout` | `1ms` | Thời gian kernel retire block chưa đầy. |
+| `CAPMESH_CAPTURE_POLL_TIMEOUT` | `--capture-poll-timeout` | `1ms` | Thời gian poll tối đa để hỗ trợ flush và shutdown đúng hạn. |
 | `CAPMESH_AGENT_METRICS_LISTEN` | `--metrics-listen` | `:19091` | Endpoint Prometheus metrics của agent. |
 | `CAPMESH_AGENT_BATCH_MAX_PACKETS` | `--batch-max-packets` | `256` | Số packet tối đa trong một capture batch. |
 | `CAPMESH_AGENT_BATCH_MAX_BYTES` | `--batch-max-bytes` | `1048576` | Số captured byte tối đa trong một capture batch. |
@@ -557,7 +563,7 @@ Các flag này có thể đặt trước hoặc sau command và override client 
 | `--direction VALUE` | Như trên | `egress`, `ingress` hoặc `both`. |
 | `--follow=true/false` | Như trên | Theo dõi thay đổi Pod trong khi capture. |
 | `--max-pods N` | Workload target | Giới hạn số Pod được resolve. |
-| `--filter BPF` | Packet capture | BPF filter được chuyển tới dumpcap, ví dụ `tcp port 443`. |
+| `--filter BPF` | Packet capture | BPF filter được dumpcap compile; AF_PACKET attach cBPF vào socket, ví dụ `tcp port 443`. |
 | `--snaplen N` | Packet capture | Số byte tối đa giữ lại mỗi packet; `65535` khi cần payload đầy đủ. |
 | `--ttl DURATION` | Normal session | Thời gian sống của session, ví dụ `30s`, `5m`, `1h`. |
 | `--reorder-window DURATION` | Packet capture | Cửa sổ reorder packet, mặc định `300ms`. |

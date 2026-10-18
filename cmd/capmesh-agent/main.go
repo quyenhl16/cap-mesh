@@ -75,6 +75,12 @@ func main() {
 	interfaceB := flag.String("interface-b", "", "physical interface mapped to B")
 	interfaceC := flag.String("interface-c", "", "physical interface mapped to C")
 	dumpcap := flag.String("dumpcap", "dumpcap", "dumpcap executable path")
+	captureEngineMode := flag.String("capture-engine", capture.EngineAuto, "capture engine: auto, afpacket, or dumpcap")
+	captureRingSize := flag.String("capture-ring-size", "64MiB", "AF_PACKET mmap ring size per capture")
+	captureBlockSize := flag.String("capture-block-size", "1MiB", "AF_PACKET TPACKET_V3 block size")
+	captureRingBudget := flag.String("capture-ring-budget", "512MiB", "maximum combined AF_PACKET ring memory")
+	captureBlockTimeout := flag.Duration("capture-block-timeout", time.Millisecond, "AF_PACKET TPACKET_V3 block retirement timeout")
+	capturePollTimeout := flag.Duration("capture-poll-timeout", time.Millisecond, "AF_PACKET poll timeout")
 	token := flag.String("token", os.Getenv("CAPMESH_TOKEN"), "shared bearer token")
 	insecureTransport := flag.Bool("insecure", false, "disable TLS (local development only)")
 	caFile := flag.String("tls-ca", "", "server CA certificate")
@@ -92,6 +98,12 @@ func main() {
 		"CAPMESH_INTERFACE_B":                "interface-b",
 		"CAPMESH_INTERFACE_C":                "interface-c",
 		"CAPMESH_DUMPCAP":                    "dumpcap",
+		"CAPMESH_CAPTURE_ENGINE":             "capture-engine",
+		"CAPMESH_CAPTURE_RING_SIZE":          "capture-ring-size",
+		"CAPMESH_CAPTURE_BLOCK_SIZE":         "capture-block-size",
+		"CAPMESH_CAPTURE_RING_BUDGET":        "capture-ring-budget",
+		"CAPMESH_CAPTURE_BLOCK_TIMEOUT":      "capture-block-timeout",
+		"CAPMESH_CAPTURE_POLL_TIMEOUT":       "capture-poll-timeout",
 		"CAPMESH_INSECURE":                   "insecure",
 		"CAPMESH_TLS_CA":                     "tls-ca",
 		"CAPMESH_TLS_SERVER_NAME":            "tls-server-name",
@@ -147,13 +159,57 @@ func main() {
 		logger.Error("capture batch limits must be positive")
 		os.Exit(2)
 	}
+	ringSize, err := capture.ParseByteSize(*captureRingSize)
+	if err != nil {
+		logger.Error("invalid capture ring size", "error", err)
+		os.Exit(2)
+	}
+	blockSize, err := capture.ParseByteSize(*captureBlockSize)
+	if err != nil {
+		logger.Error("invalid capture block size", "error", err)
+		os.Exit(2)
+	}
+	ringBudgetSize, err := capture.ParseByteSize(*captureRingBudget)
+	if err != nil {
+		logger.Error("invalid capture ring budget", "error", err)
+		os.Exit(2)
+	}
+	maximumInt := int64(^uint(0) >> 1)
+	if ringSize > maximumInt || blockSize > maximumInt {
+		logger.Error("capture ring configuration exceeds platform integer size")
+		os.Exit(2)
+	}
+	afpacketConfig := capture.DefaultAFPacketConfig()
+	afpacketConfig.RingSize = int(ringSize)
+	afpacketConfig.BlockSize = int(blockSize)
+	afpacketConfig.BlockTimeout = *captureBlockTimeout
+	afpacketConfig.PollTimeout = *capturePollTimeout
+	if err := afpacketConfig.Validate(); err != nil {
+		logger.Error("invalid AF_PACKET configuration", "error", err)
+		os.Exit(2)
+	}
+	ringBudget, err := capture.NewRingBudget(ringBudgetSize)
+	if err != nil {
+		logger.Error("invalid AF_PACKET ring budget", "error", err)
+		os.Exit(2)
+	}
 
 	reporter := grpcclient.NewReporter(256)
 	registry := prometheus.NewRegistry()
 	observability.RegisterRuntimeCollectors(registry)
 	agentMetrics := metricadapter.NewAgent(registry, reporter)
 	reporter.SetMetrics(agentMetrics)
-	engine := metricadapter.NewCaptureEngine(capture.Dumpcap{Binary: *dumpcap, Logger: logger}, agentMetrics)
+	afpacketEngine, err := capture.NewAFPacket(afpacketConfig, capture.NewDumpcapFilterCompiler(*dumpcap), ringBudget, agentMetrics)
+	if err != nil {
+		logger.Error("create AF_PACKET capture engine failed", "error", err)
+		os.Exit(2)
+	}
+	selectedEngine, err := capture.SelectEngine(*captureEngineMode, afpacketEngine, capture.Dumpcap{Binary: *dumpcap, Logger: logger}, agentMetrics)
+	if err != nil {
+		logger.Error("select capture engine failed", "error", err)
+		os.Exit(2)
+	}
+	engine := metricadapter.NewCaptureEngine(selectedEngine, agentMetrics)
 	progressLogger := logadapter.NewCaptureProgress(logger)
 	service := appagent.NewService(*node, interfaces, engine, agentMetrics, progressLogger, *batchMaxPackets, *batchMaxDelay, *captureLogInterval)
 	service.SetBatchMaxBytes(*batchMaxBytes)

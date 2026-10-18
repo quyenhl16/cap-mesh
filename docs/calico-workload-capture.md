@@ -71,5 +71,5 @@ reconciled every five seconds by default; change
 `CAPMESH_WORKLOAD_RECONCILE_INTERVAL` to adjust it.
 
 Phase 1 limits a session to 100 workload Pods in total and 50 active capture
-sources on one node. This bounds the number of `dumpcap` processes until the
-multi-interface capture engine planned for phase 2 is implemented.
+sources on one node. With the Phase 2 backend, each source owns one bounded
+AF_PACKET ring; the agent-wide ring budget prevents unbounded mmap growth.

@@ -110,6 +110,11 @@ Sau khi profiling chứng minh allocation là nút thắt, dùng `sync.Pool` cho
 
 ## Giai đoạn 2 — Capture engine AF_PACKET
 
+Trạng thái implementation: backend `AF_PACKET/TPACKET_V3`, strict/auto
+selection, cBPF filter, ring budget, socket-drop metrics và Kubernetes overlays
+đã được bổ sung. Cần chạy benchmark dumpcap/AF_PACKET trên cùng cluster để chốt
+ring size mặc định và xác nhận tiêu chí hiệu năng trước khi đánh dấu hoàn thành.
+
 Bổ sung implementation mới phía sau `CaptureEngine`:
 
 ```text
@@ -120,7 +125,7 @@ NIC → kernel ring buffer → AF_PACKET TPACKET_V3 → agent batch
 
 ```text
 --capture-engine=afpacket
---capture-ring-size=256MiB
+--capture-ring-size=64MiB
 --capture-block-size=1MiB
 ```
 
